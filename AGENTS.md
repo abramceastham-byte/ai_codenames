@@ -20,7 +20,6 @@ This repository contains a full-stack implementation of the Codenames board game
   - `web/svelte/`: SvelteKit (Svelte 5) application (Newer/Experimental).
 
 - **Infrastructure**
-  - `.drone.yml`: CI/CD configuration.
   - `Dockerfile`: Container definitions for various services.
 
 ## 🛠 Development Workflow
@@ -77,7 +76,6 @@ Located in `web/svelte/`.
 
 ## 🚀 Deployment
 
-- **CI/CD**: Drone CI (`.drone.yml`).
 - **Containerization**:
   - `cmd/codenames-server/Dockerfile`
   - `cmd/ai-server/Dockerfile`
