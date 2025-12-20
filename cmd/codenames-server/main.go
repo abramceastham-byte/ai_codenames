@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -74,19 +73,19 @@ func loadKeys() (*securecookie.SecureCookie, error) {
 }
 
 func loadOrGenKey(name string) ([]byte, error) {
-	f, err := ioutil.ReadFile(name)
+	f, err := os.ReadFile(name)
 	if err == nil {
 		return f, nil
 	}
 
 	dat := securecookie.GenerateRandomKey(32)
 	if dat == nil {
-		return nil, errors.New("Failed to generate key")
+		return nil, errors.New("failed to generate key")
 	}
 
-	err = ioutil.WriteFile(name, dat, 0777)
+	err = os.WriteFile(name, dat, 0777)
 	if err != nil {
-		return nil, errors.New("Error writing file")
+		return nil, errors.New("error writing file")
 	}
 	return dat, nil
 }

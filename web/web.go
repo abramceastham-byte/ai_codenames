@@ -559,7 +559,7 @@ func (s *Srv) serveStartGame(w http.ResponseWriter, r *http.Request, p *codename
 			WithMessage("failed to make players")
 	}
 
-	if err := s.broadcastMessage(game, prs, func(g *codenames.Game) interface{} {
+	if err := s.broadcastMessage(game, prs, func(g *codenames.Game) any {
 		return &GameStart{
 			Game:    g,
 			Players: players,
@@ -689,7 +689,7 @@ func (s *Srv) toPlayers(prs []*codenames.PlayerRole) ([]*Player, error) {
 	return out, nil
 }
 
-func (s *Srv) broadcastMessage(game *codenames.Game, prs []*codenames.PlayerRole, fn func(*codenames.Game) interface{}) error {
+func (s *Srv) broadcastMessage(game *codenames.Game, prs []*codenames.PlayerRole, fn func(*codenames.Game) any) error {
 	// First, send the full board to the spymasters.
 	fullMsg := fn(game)
 	for _, pr := range prs {

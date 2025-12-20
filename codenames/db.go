@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 var (
@@ -284,7 +287,7 @@ type DB interface {
 
 func RandomGameID(r *rand.Rand) GameID {
 	var buf bytes.Buffer
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		buf.WriteString(randomWord(r))
 	}
 	return GameID(buf.String())
@@ -316,10 +319,12 @@ func RandomRobotID(r *rand.Rand) RobotID {
 	return RobotID("robot_" + string(b))
 }
 
+var c = cases.Title(language.English)
+
 func randomWord(r *rand.Rand) string {
 	var buf strings.Builder
-	for _, word := range strings.Split(Words[r.Intn(len(Words))], "_") {
-		buf.WriteString(strings.Title(word))
+	for word := range strings.SplitSeq(Words[r.Intn(len(Words))], "_") {
+		buf.WriteString(c.String(word))
 	}
 	return buf.String()
 }

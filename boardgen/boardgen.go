@@ -37,6 +37,7 @@ func New(starter codenames.Team, r *rand.Rand) *codenames.Board {
 	agents := make([]codenames.Agent, len(baseAgents))
 	copy(agents, baseAgents)
 
+	// The team that starts gets one more card
 	switch starter {
 	case codenames.RedTeam:
 		agents = append(agents, codenames.RedAgent)
