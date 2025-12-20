@@ -126,7 +126,7 @@ func (s *Srv) initMux() *mux.Router {
 		{
 			path:        "/api/game/{id}/assignRole",
 			method:      http.MethodPost,
-			handlerFunc: s.requireGameAuth(s.serveAssignRole, isGameCreator(), isGamePending()),
+			handlerFunc: s.requireGameAuth(s.serveAssignRole, isGamePending()),
 		},
 		// Start game.
 		{
@@ -332,6 +332,12 @@ func (s *Srv) serveCreateGame(w http.ResponseWriter, r *http.Request) error {
 		return httperr.
 			Internal("failed to create game for user %q: %w", uID, err).
 			WithMessage("failed to create game")
+	}
+
+	if err := s.db.JoinGame(id, codenames.PlayerID{PlayerType: codenames.PlayerTypeHuman, ID: string(uID)}); err != nil {
+		return httperr.
+			Internal("failed to join game for creator %q: %w", uID, err).
+			WithMessage("failed to join game")
 	}
 
 	return jsonResp(w, struct {

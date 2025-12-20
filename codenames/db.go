@@ -296,7 +296,7 @@ func RandomGameID(r *rand.Rand) GameID {
 var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
 func RandomPlayerID(r *rand.Rand) string {
-	b := make([]byte, 64)
+	b := make([]byte, 16)
 	for i := range b {
 		b[i] = letters[r.Intn(len(letters))]
 	}
@@ -304,7 +304,7 @@ func RandomPlayerID(r *rand.Rand) string {
 }
 
 func RandomUserID(r *rand.Rand) UserID {
-	b := make([]byte, 64)
+	b := make([]byte, 16)
 	for i := range b {
 		b[i] = letters[r.Intn(len(letters))]
 	}
@@ -312,7 +312,7 @@ func RandomUserID(r *rand.Rand) UserID {
 }
 
 func RandomRobotID(r *rand.Rand) RobotID {
-	b := make([]byte, 64)
+	b := make([]byte, 16)
 	for i := range b {
 		b[i] = letters[r.Intn(len(letters))]
 	}

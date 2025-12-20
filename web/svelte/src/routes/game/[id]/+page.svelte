@@ -6,13 +6,18 @@
 	import BoardView from '$lib/components/BoardView.svelte';
     import { goto } from '$app/navigation';
 
-	const gameId = $derived($page.params.id);
+	const gameId = $derived($page.params.id ?? '');
 
 	onMount(async () => {
+        if (!gameId) {
+             goto('/lobby');
+             return;
+        }
+
         if (!gameStore.user) {
              await new Promise(r => setTimeout(r, 100));
             if (!gameStore.user) {
-			    goto('/');
+						    goto('/');
                 return;
             }
         }

@@ -72,7 +72,7 @@ WHERE GamePlayers.game_id = ?`
 // actually hold the *sql.DB in this struct, we force all callers to get a
 // handle via channels.
 type DB struct {
-	dbChan   chan func(*sql.DB)
+	sdb      *sql.DB
 	doneChan chan struct{}
 	closeFn  func() error
 	r        *rand.Rand
@@ -83,40 +83,45 @@ func New(fn string, r *rand.Rand) (*DB, error) {
 	if _, err := os.Stat(fn); os.IsNotExist(err) {
 		return nil, errors.New("DB needs to be initialized")
 	}
-	sdb, err := sql.Open("sqlite3", fn)
+	sdb, err := sql.Open("sqlite3", fn+"?_loc=UTC")
 	if err != nil {
 		return nil, err
 	}
 
+	// See https://briandouglas.ie/sqlite-defaults/
+	pragmas := []string{
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA synchronous = NORMAL",
+		"PRAGMA busy_timeout = 1000",
+		"PRAGMA cache_size = -5000",
+		"PRAGMA foreign_keys = ON",
+		// We don't really delete anything
+		"PRAGMA auto_vacuum = FULL",
+		"PRAGMA temp_store = MEMORY",
+		"PRAGMA mmap_size = 268435456",
+		"PRAGMA page_size = 4096",
+	}
+
+	for _, pragma := range pragmas {
+		if _, err := sdb.Exec(pragma); err != nil {
+			return nil, fmt.Errorf("failed to set pragma %q: %w", pragma, err)
+		}
+	}
+	sdb.SetMaxOpenConns(1)
+
 	db := &DB{
-		dbChan:   make(chan func(*sql.DB)),
+		sdb:      sdb,
 		doneChan: make(chan struct{}),
 		closeFn: func() error {
 			return sdb.Close()
 		},
 		r: r,
 	}
-	go db.run(sdb)
 	return db, nil
 }
 
-// run handles all database calls, and ensures that only one thing is happening
-// against the database at a time.
-func (s *DB) run(sdb *sql.DB) {
-	for {
-		select {
-		case dbFn := <-s.dbChan:
-			dbFn(sdb)
-		case <-s.doneChan:
-			sdb.Close()
-			return
-		}
-	}
-}
-
 func (s *DB) Close() error {
-	close(s.doneChan)
-	return s.closeFn()
+	return s.sdb.Close()
 }
 
 func (s *DB) NewGame(g *codenames.Game) (codenames.GameID, error) {
@@ -125,329 +130,225 @@ func (s *DB) NewGame(g *codenames.Game) (codenames.GameID, error) {
 		return "", fmt.Errorf("failed to serialize game state: %w", err)
 	}
 
-	type result struct {
-		id  codenames.GameID
-		err error
+	tx, err := s.sdb.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	id, err := s.uniqueID(tx)
+	if err != nil {
+		return "", err
 	}
 
-	resChan := make(chan *result)
-	s.dbChan <- func(sdb *sql.DB) {
-		tx, err := sdb.Begin()
-		if err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-		defer tx.Rollback()
-
-		id, err := s.uniqueID(tx)
-		if err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-
-		_, err = tx.Exec(createGameStmt, string(id), codenames.Pending, string(g.CreatedBy), gsb)
-		if err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-
-		if err := tx.Commit(); err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-		resChan <- &result{id: id}
+	_, err = tx.Exec(createGameStmt, string(id), codenames.Pending, string(g.CreatedBy), gsb)
+	if err != nil {
+		return "", err
 	}
 
-	res := <-resChan
-	if res.err != nil {
-		return codenames.GameID(""), res.err
+	if err := tx.Commit(); err != nil {
+		return "", err
 	}
-	return res.id, nil
+
+	return id, nil
 }
 
 func (s *DB) Game(gID codenames.GameID) (*codenames.Game, error) {
-	type result struct {
-		game *codenames.Game
-		err  error
+	tx, err := s.sdb.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var (
+		g   codenames.Game
+		gsb []byte
+	)
+	if err := tx.QueryRow(getGameStmt, string(gID)).Scan(&g.ID, &g.Status, &g.CreatedBy, &gsb); err != nil {
+		return nil, err
 	}
 
-	resChan := make(chan *result)
-	s.dbChan <- func(sdb *sql.DB) {
-		tx, err := sdb.Begin()
-		if err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-		defer tx.Rollback()
-
-		var (
-			g   codenames.Game
-			gsb []byte
-		)
-		if err := tx.QueryRow(getGameStmt, string(gID)).Scan(&g.ID, &g.Status, &g.CreatedBy, &gsb); err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-
-		if err := tx.Commit(); err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-
-		if g.State, err = gameStateFromBytes(gsb); err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-		resChan <- &result{game: &g}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
-	res := <-resChan
-	if res.err != nil {
-		return nil, res.err
+	if g.State, err = gameStateFromBytes(gsb); err != nil {
+		return nil, err
 	}
-	return res.game, nil
+
+	return &g, nil
+}
+
+func (s *DB) withTx(fn func(*sql.Tx) error) error {
+	tx, err := s.sdb.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := fn(tx); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *DB) NewUser(name string) (codenames.UserID, error) {
-	type result struct {
-		id  codenames.UserID
-		err error
-	}
+	id := codenames.RandomUserID(s.r)
 
-	resChan := make(chan *result)
-	s.dbChan <- func(sdb *sql.DB) {
-		id := codenames.RandomUserID(s.r)
-		_, err := sdb.Exec(createUserStmt, string(id), name)
-		if err != nil {
-			resChan <- &result{err: err}
-			return
+	err := s.withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(createUserStmt, string(id), name); err != nil {
+			return err
 		}
 
-		resChan <- &result{id: id}
+		if _, err := s.createPlayer(codenames.PlayerID{PlayerType: codenames.PlayerTypeHuman, ID: string(id)}, tx); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
 	}
 
-	res := <-resChan
-	if res.err != nil {
-		return codenames.UserID(""), res.err
-	}
-	return res.id, nil
+	return id, nil
 }
 
 func (s *DB) NewRobot(name string) (codenames.RobotID, error) {
-	type result struct {
-		id  codenames.RobotID
-		err error
-	}
+	id := codenames.RandomRobotID(s.r)
 
-	resChan := make(chan *result)
-	s.dbChan <- func(sdb *sql.DB) {
-		id := codenames.RandomRobotID(s.r)
-		_, err := sdb.Exec(createAIStmt, string(id), name)
-		if err != nil {
-			resChan <- &result{err: err}
-			return
+	err := s.withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(createAIStmt, string(id), name); err != nil {
+			return err
 		}
 
-		resChan <- &result{id: id}
+		if _, err := s.createPlayer(codenames.PlayerID{PlayerType: codenames.PlayerTypeRobot, ID: string(id)}, tx); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
 	}
 
-	res := <-resChan
-	if res.err != nil {
-		return codenames.RobotID(""), res.err
-	}
-	return res.id, nil
+	return id, nil
 }
 
 func (s *DB) User(id codenames.UserID) (*codenames.User, error) {
-	type result struct {
-		user *codenames.User
-		err  error
+
+	var u codenames.User
+	err := s.sdb.QueryRow(getUserStmt, string(id)).Scan(&u.ID, &u.Name)
+	if err == sql.ErrNoRows {
+		return nil, codenames.ErrUserNotFound
+	} else if err != nil {
+		return nil, err
 	}
 
-	resChan := make(chan *result)
-	s.dbChan <- func(sdb *sql.DB) {
-		var u codenames.User
-		err := sdb.QueryRow(getUserStmt, string(id)).Scan(&u.ID, &u.Name)
-		if err == sql.ErrNoRows {
-			resChan <- &result{err: codenames.ErrUserNotFound}
-			return
-		} else if err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-
-		resChan <- &result{user: &u}
-	}
-
-	res := <-resChan
-	if res.err != nil {
-		return nil, res.err
-	}
-	return res.user, nil
+	return &u, nil
 }
 
 func (s *DB) Robot(id codenames.RobotID) (*codenames.Robot, error) {
-	type result struct {
-		robot *codenames.Robot
-		err   error
+	var r codenames.Robot
+	err := s.sdb.QueryRow(getRobotStmt, string(id)).Scan(&r.ID, &r.Name)
+	if err == sql.ErrNoRows {
+		return nil, codenames.ErrRobotNotFound
+	} else if err != nil {
+		return nil, err
 	}
 
-	resChan := make(chan *result)
-	s.dbChan <- func(sdb *sql.DB) {
-		var r codenames.Robot
-		err := sdb.QueryRow(getRobotStmt, string(id)).Scan(&r.ID, &r.Name)
-		if err == sql.ErrNoRows {
-			resChan <- &result{err: codenames.ErrRobotNotFound}
-			return
-		} else if err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-
-		resChan <- &result{robot: &r}
-	}
-
-	res := <-resChan
-	if res.err != nil {
-		return nil, res.err
-	}
-	return res.robot, nil
+	return &r, nil
 }
 
 func (s *DB) PendingGames() ([]codenames.GameID, error) {
-	type result struct {
-		ids []codenames.GameID
-		err error
+	rows, err := s.sdb.Query(getPendingGamesStmt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []codenames.GameID
+	for rows.Next() {
+		var id codenames.GameID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
 	}
 
-	resChan := make(chan *result)
-	s.dbChan <- func(sdb *sql.DB) {
-		rows, err := sdb.Query(getPendingGamesStmt)
-		if err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-		defer rows.Close()
-
-		var ids []codenames.GameID
-		for rows.Next() {
-			var id codenames.GameID
-			if err := rows.Scan(&id); err != nil {
-				resChan <- &result{err: err}
-				return
-			}
-			ids = append(ids, id)
-		}
-
-		if err := rows.Err(); err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-
-		resChan <- &result{ids: ids}
-	}
-	res := <-resChan
-	if res.err != nil {
-		return nil, res.err
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
-	return res.ids, nil
+	return ids, nil
 }
 
 func (s *DB) PlayersInGame(gID codenames.GameID) ([]*codenames.PlayerRole, error) {
-	type result struct {
-		prs []*codenames.PlayerRole
-		err error
+	rows, err := s.sdb.Query(getGamePlayers, gID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query for game players: %w", err)
 	}
-	resChan := make(chan *result)
+	defer rows.Close()
 
-	s.dbChan <- func(sdb *sql.DB) {
-		rows, err := sdb.Query(getGamePlayers, gID)
-		if err != nil {
-			resChan <- &result{err: fmt.Errorf("failed to query for game players: %w", err)}
-			return
+	var prs []*codenames.PlayerRole
+	for rows.Next() {
+		var (
+			pr codenames.PlayerRole
+
+			role   sql.NullString
+			team   sql.NullString
+			userID sql.NullString
+			aiID   sql.NullString
+		)
+		if err := rows.Scan(&userID, &aiID, &role, &team, &pr.RoleAssigned); err != nil {
+			return nil, fmt.Errorf("failed to scan game player: %w", err)
 		}
-		defer rows.Close()
-
-		var prs []*codenames.PlayerRole
-		for rows.Next() {
-			var (
-				pr codenames.PlayerRole
-
-				role   sql.NullString
-				team   sql.NullString
-				userID sql.NullString
-				aiID   sql.NullString
-			)
-			if err := rows.Scan(&userID, &aiID, &role, &team, &pr.RoleAssigned); err != nil {
-				resChan <- &result{err: fmt.Errorf("failed to scan game player: %w", err)}
-				return
-			}
-			if role.Valid {
-				pr.Role = codenames.Role(role.String)
-			}
-			if team.Valid {
-				pr.Team = codenames.Team(team.String)
-			}
-			if userID.Valid && aiID.Valid {
-				resChan <- &result{err: fmt.Errorf("both user_id and ai_id were set: %q, %q", userID.String, aiID.String)}
-				return
-			}
-			if !userID.Valid && !aiID.Valid {
-				resChan <- &result{err: errors.New("neither of user_id or ai_id were set")}
-				return
-			}
-			if userID.Valid {
-				pr.PlayerID = codenames.PlayerID{
-					PlayerType: codenames.PlayerTypeHuman,
-					ID:         userID.String,
-				}
-			}
-			if aiID.Valid {
-				pr.PlayerID = codenames.PlayerID{
-					PlayerType: codenames.PlayerTypeRobot,
-					ID:         aiID.String,
-				}
-			}
-			prs = append(prs, &pr)
+		if role.Valid {
+			pr.Role = codenames.Role(role.String)
 		}
-
-		if err := rows.Err(); err != nil {
-			resChan <- &result{err: fmt.Errorf("error scanning rows: %w", err)}
-			return
+		if team.Valid {
+			pr.Team = codenames.Team(team.String)
 		}
-
-		resChan <- &result{prs: prs}
-		return
+		if userID.Valid && aiID.Valid {
+			return nil, fmt.Errorf("both user_id and ai_id were set: %q, %q", userID.String, aiID.String)
+		}
+		if !userID.Valid && !aiID.Valid {
+			return nil, errors.New("neither of user_id or ai_id were set")
+		}
+		if userID.Valid {
+			pr.PlayerID = codenames.PlayerID{
+				PlayerType: codenames.PlayerTypeHuman,
+				ID:         userID.String,
+			}
+		}
+		if aiID.Valid {
+			pr.PlayerID = codenames.PlayerID{
+				PlayerType: codenames.PlayerTypeRobot,
+				ID:         aiID.String,
+			}
+		}
+		prs = append(prs, &pr)
 	}
-	res := <-resChan
-	if res.err != nil {
-		return nil, res.err
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error scanning rows: %w", err)
 	}
-	return res.prs, nil
+
+	return prs, nil
 }
 
 func (s *DB) JoinGame(gID codenames.GameID, pID codenames.PlayerID) error {
 	// First, see if a player entity already exists for this player.
 	entityID, err := s.Player(pID)
-	if err == sql.ErrNoRows {
-		if entityID, err = s.createPlayer(pID); err != nil {
-			return fmt.Errorf("failed to create player: %w", err)
-		}
-	}
 	if err != nil {
 		return fmt.Errorf("failed to load player: %w", err)
 	}
 
 	// If we're here, we've got a player ID and we can add them to the game.
-	resChan := make(chan error)
-	s.dbChan <- func(sdb *sql.DB) {
-		_, err := sdb.Exec(joinGameStmt, gID, entityID)
-		resChan <- err
-	}
-
-	if err := <-resChan; err != nil {
-		return fmt.Errorf("failed to join game: %w", err)
+	if _, err := s.sdb.Exec(joinGameStmt, gID, entityID); err != nil {
+		return err
 	}
 	return nil
 }
@@ -460,106 +361,58 @@ func (s *DB) AssignRole(gID codenames.GameID, req *codenames.PlayerRole) error {
 	}
 
 	// If we're here, we've got a player ID and we can add them to the game.
-	resChan := make(chan error)
-	s.dbChan <- func(sdb *sql.DB) {
-		res, err := sdb.Exec(assignRoleStmt, req.Role, req.Team, gID, pID)
-		if err != nil {
-			resChan <- fmt.Errorf("failed to assign role: %w", err)
-			return
-		}
-		numRows, err := res.RowsAffected()
-		if err != nil {
-			resChan <- fmt.Errorf("failed to get the number of affected rows: %w", err)
-			return
-		}
-		if numRows != 1 {
-			resChan <- fmt.Errorf("%d rows affected, expected exactly 1", numRows)
-			return
-		}
-		resChan <- nil
+	res, err := s.sdb.Exec(assignRoleStmt, string(req.Role), string(req.Team), gID, pID)
+	if err != nil {
+		return fmt.Errorf("failed to assign role: %w", err)
 	}
-
-	if err := <-resChan; err != nil {
-		return err
+	numRows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get the number of affected rows: %w", err)
+	}
+	if numRows != 1 {
+		return fmt.Errorf("%d rows affected, expected exactly 1", numRows)
 	}
 	return nil
 }
 
-func (s *DB) createPlayer(id codenames.PlayerID) (string, error) {
-	type result struct {
-		id  string
-		err error
+func (s *DB) createPlayer(id codenames.PlayerID, tx *sql.Tx) (string, error) {
+	pID := codenames.RandomPlayerID(s.r)
+	var userID, aiID sql.NullString
+	switch id.PlayerType {
+	case codenames.PlayerTypeHuman:
+		userID.Valid = true
+		userID.String = id.ID
+	case codenames.PlayerTypeRobot:
+		aiID.Valid = true
+		aiID.String = id.ID
+	default:
+		return "", fmt.Errorf("unknown player type %q", id.PlayerType)
 	}
-
-	resChan := make(chan *result)
-	s.dbChan <- func(sdb *sql.DB) {
-		pID := codenames.RandomPlayerID(s.r)
-		var userID, aiID sql.NullString
-		switch id.PlayerType {
-		case codenames.PlayerTypeHuman:
-			userID.Valid = true
-			userID.String = id.ID
-		case codenames.PlayerTypeRobot:
-			aiID.Valid = true
-			aiID.String = id.ID
-		default:
-			resChan <- &result{err: fmt.Errorf("unknown player type %q", id.PlayerType)}
-			return
-		}
-		if _, err := sdb.Exec(createPlayerStmt, pID, userID, aiID); err != nil {
-			resChan <- &result{err: fmt.Errorf("failed to insert player: %w", err)}
-			return
-		}
-		resChan <- &result{id: pID}
+	if _, err := tx.Exec(createPlayerStmt, pID, userID, aiID); err != nil {
+		return "", fmt.Errorf("failed to insert player: %w", err)
 	}
-
-	res := <-resChan
-	if res.err != nil {
-		return "", res.err
-	}
-	return res.id, nil
+	return userID.String, nil
 }
 
 func (s *DB) Player(id codenames.PlayerID) (string, error) {
-	type result struct {
-		id  string
-		err error
+	var stmt string
+	switch id.PlayerType {
+	case codenames.PlayerTypeHuman:
+		stmt = getUserPlayerStmt
+	case codenames.PlayerTypeRobot:
+		stmt = getAIPlayerStmt
+	default:
+		return "", fmt.Errorf("unknown player type %q", id.PlayerType)
 	}
-
-	resChan := make(chan *result)
-	s.dbChan <- func(sdb *sql.DB) {
-		var stmt string
-		switch id.PlayerType {
-		case codenames.PlayerTypeHuman:
-			stmt = getUserPlayerStmt
-		case codenames.PlayerTypeRobot:
-			stmt = getAIPlayerStmt
-		default:
-			resChan <- &result{err: fmt.Errorf("unknown player type %q", id.PlayerType)}
-			return
-		}
-		var outID string
-		if err := sdb.QueryRow(stmt, id.ID).Scan(&outID); err != nil {
-			resChan <- &result{err: err}
-			return
-		}
-		resChan <- &result{id: outID}
+	var outID string
+	if err := s.sdb.QueryRow(stmt, id.ID).Scan(&outID); err != nil {
+		return "", err
 	}
-
-	res := <-resChan
-	if res.err != nil {
-		return "", res.err
-	}
-	return res.id, nil
+	return outID, nil
 }
 
 func (s *DB) BatchPlayerNames(pIDs []codenames.PlayerID) (map[codenames.PlayerID]string, error) {
-	type result struct {
-		names map[codenames.PlayerID]string
-		err   error
-	}
-
-	var userIDArgs, aiIDArgs []interface{}
+	var userIDArgs, aiIDArgs []any
 	for _, pID := range pIDs {
 		switch pID.PlayerType {
 		case codenames.PlayerTypeHuman:
@@ -584,51 +437,37 @@ JOIN AIs
   ON AIs.id = Players.ai_id
 WHERE AIs.id IN %s`, groupedArgs(len(userIDArgs)), groupedArgs(len(aiIDArgs)))
 
-	var allIDArgs []interface{}
-	allIDArgs = append(userIDArgs, aiIDArgs...)
+	var allIDArgs = append(userIDArgs, aiIDArgs...)
 
-	resChan := make(chan *result)
-	s.dbChan <- func(sdb *sql.DB) {
-		rows, err := sdb.Query(q, allIDArgs...)
-		if err != nil {
-			resChan <- &result{err: fmt.Errorf("failed to query names: %w", err)}
-			return
-		}
-
-		out := make(map[codenames.PlayerID]string)
-		for rows.Next() {
-			var name, id, typ string
-			if err := rows.Scan(&name, &id, &typ); err != nil {
-				resChan <- &result{err: fmt.Errorf("error scanning row: %w", err)}
-				return
-			}
-			var playerType codenames.PlayerType
-			switch typ {
-			case "user":
-				playerType = codenames.PlayerTypeHuman
-			case "ai":
-				playerType = codenames.PlayerTypeRobot
-			default:
-				resChan <- &result{err: fmt.Errorf("unexpected player type %q", typ)}
-				return
-			}
-			pID := codenames.PlayerID{PlayerType: playerType, ID: id}
-			out[pID] = name
-		}
-
-		if err := rows.Err(); err != nil {
-			resChan <- &result{err: fmt.Errorf("error scanning rows: %w", err)}
-			return
-		}
-
-		resChan <- &result{names: out}
+	rows, err := s.sdb.Query(q, allIDArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query names: %w", err)
 	}
 
-	res := <-resChan
-	if res.err != nil {
-		return nil, res.err
+	out := make(map[codenames.PlayerID]string)
+	for rows.Next() {
+		var name, id, typ string
+		if err := rows.Scan(&name, &id, &typ); err != nil {
+			return nil, fmt.Errorf("error scanning row: %w", err)
+		}
+		var playerType codenames.PlayerType
+		switch typ {
+		case "user":
+			playerType = codenames.PlayerTypeHuman
+		case "ai":
+			playerType = codenames.PlayerTypeRobot
+		default:
+			return nil, fmt.Errorf("unexpected player type %q", typ)
+		}
+		pID := codenames.PlayerID{PlayerType: playerType, ID: id}
+		out[pID] = name
 	}
-	return res.names, nil
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error scanning rows: %w", err)
+	}
+
+	return out, nil
 }
 
 func groupedArgs(n int) string {
@@ -639,14 +478,8 @@ func groupedArgs(n int) string {
 }
 
 func (s *DB) StartGame(gID codenames.GameID) error {
-	resChan := make(chan error)
-	s.dbChan <- func(sdb *sql.DB) {
-		_, err := sdb.Exec(startGameStmt, gID)
-		resChan <- err
-	}
-
-	if err := <-resChan; err != nil {
-		return fmt.Errorf("failed to mark game started: %w", err)
+	if _, err := s.sdb.Exec(startGameStmt, gID); err != nil {
+		return err
 	}
 	return nil
 }
@@ -657,15 +490,10 @@ func (s *DB) UpdateState(gID codenames.GameID, gs *codenames.GameState) error {
 		return fmt.Errorf("failed to serialize game state: %w", err)
 	}
 
-	resChan := make(chan error)
-	s.dbChan <- func(sdb *sql.DB) {
-		_, err := sdb.Exec(updateGameStateStmt, gsb, gID)
-		resChan <- err
-	}
-
-	if err := <-resChan; err != nil {
+	if _, err := s.sdb.Exec(updateGameStateStmt, gsb, gID); err != nil {
 		return fmt.Errorf("failed to update game state: %w", err)
 	}
+
 	return nil
 }
 
