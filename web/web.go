@@ -367,8 +367,9 @@ func (s *Srv) servePendingGames(w http.ResponseWriter, r *http.Request) error {
 func (s *Srv) serveGame(w http.ResponseWriter, r *http.Request, p *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
 	// If you aren't in this game or ain't a spymaster, you don't get to see what
 	// color all the cards are, that's [REDACTED].
-	if userPR == nil || userPR.Role != codenames.SpymasterRole {
-		game.State.Board = codenames.Revealed(game.State.Board)
+	isSpymaster := userPR != nil && userPR.Role == codenames.SpymasterRole
+	if !isSpymaster {
+		game.State.Board = codenames.Revealed(game.State.Board, game.Status)
 	}
 
 	return jsonResp(w, game)
@@ -728,7 +729,7 @@ func (s *Srv) broadcastMessage(game *codenames.Game, prs []*codenames.PlayerRole
 
 	// Now, clear out the card agent colorings and send that board to everyone
 	// else.
-	game.State.Board = codenames.Revealed(game.State.Board)
+	game.State.Board = codenames.Revealed(game.State.Board, game.Status)
 	operativeMsg := fn(game)
 	for _, pr := range prs {
 		if pr.Role != codenames.OperativeRole && pr.Role != codenames.NoRole {
@@ -772,7 +773,7 @@ func (s *Srv) serveClue(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 	}
 
 	// Update the state in the database.
-	if err := s.db.UpdateState(g.ID, newState); err != nil {
+	if err := s.db.UpdateState(g.ID, newState, newStatus); err != nil {
 		return httperr.
 			Internal("failed to update state for game %q: %w", g.ID, err).
 			WithMessage("failed to update game state")
@@ -885,7 +886,7 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 	s.consensus.Clear(g.ID)
 
 	// Update the state in the database.
-	if err := s.db.UpdateState(g.ID, newState); err != nil {
+	if err := s.db.UpdateState(g.ID, newState, newStatus); err != nil {
 		return httperr.
 			Internal("failed to update state for game %q: %w", g.ID, err).
 			WithMessage("failed to update game state")

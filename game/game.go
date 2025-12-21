@@ -222,7 +222,7 @@ func (g *Game) Play() (*Outcome, error) {
 		}
 
 		for g.state.ActiveRole == codenames.OperativeRole {
-			guess, err := op.Guess(codenames.Revealed(g.state.Board), clue)
+			guess, err := op.Guess(codenames.Revealed(g.state.Board, codenames.Playing), clue)
 			if err != nil {
 				return nil, fmt.Errorf("guess on %q: %v", g.state.ActiveTeam, err)
 			}

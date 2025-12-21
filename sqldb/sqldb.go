@@ -6,6 +6,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"strings"
@@ -27,7 +28,7 @@ SET status = 'PLAYING'
 WHERE id = ?`
 	updateGameStateStmt = `
 UPDATE Games
-SET state = ?
+SET state = ?, status = ?
 WHERE id = ?`
 
 	// User statements
@@ -130,23 +131,18 @@ func (s *DB) NewGame(g *codenames.Game) (codenames.GameID, error) {
 		return "", fmt.Errorf("failed to serialize game state: %w", err)
 	}
 
-	tx, err := s.sdb.Begin()
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
+	var id codenames.GameID
+	if err := s.withTx(func(tx *sql.Tx) error {
+		if id, err = s.uniqueID(tx); err != nil {
+			return err
+		}
 
-	id, err := s.uniqueID(tx)
-	if err != nil {
-		return "", err
-	}
-
-	_, err = tx.Exec(createGameStmt, string(id), codenames.Pending, string(g.CreatedBy), gsb)
-	if err != nil {
-		return "", err
-	}
-
-	if err := tx.Commit(); err != nil {
+		_, err = tx.Exec(createGameStmt, string(id), codenames.Pending, string(g.CreatedBy), gsb)
+		if err != nil {
+			return fmt.Errorf("failed to create game: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return "", err
 	}
 
@@ -154,21 +150,13 @@ func (s *DB) NewGame(g *codenames.Game) (codenames.GameID, error) {
 }
 
 func (s *DB) Game(gID codenames.GameID) (*codenames.Game, error) {
-	tx, err := s.sdb.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
 
 	var (
 		g   codenames.Game
 		gsb []byte
+		err error
 	)
-	if err := tx.QueryRow(getGameStmt, string(gID)).Scan(&g.ID, &g.Status, &g.CreatedBy, &gsb); err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(); err != nil {
+	if err := s.sdb.QueryRow(getGameStmt, string(gID)).Scan(&g.ID, &g.Status, &g.CreatedBy, &gsb); err != nil {
 		return nil, err
 	}
 
@@ -184,7 +172,11 @@ func (s *DB) withTx(fn func(*sql.Tx) error) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			log.Printf("failed to rollback tx: %v", err)
+		}
+	}()
 
 	if err := fn(tx); err != nil {
 		return err
@@ -484,13 +476,13 @@ func (s *DB) StartGame(gID codenames.GameID) error {
 	return nil
 }
 
-func (s *DB) UpdateState(gID codenames.GameID, gs *codenames.GameState) error {
+func (s *DB) UpdateState(gID codenames.GameID, gs *codenames.GameState, stat codenames.GameStatus) error {
 	gsb, err := gameStateBytes(gs)
 	if err != nil {
 		return fmt.Errorf("failed to serialize game state: %w", err)
 	}
 
-	if _, err := s.sdb.Exec(updateGameStateStmt, gsb, gID); err != nil {
+	if _, err := s.sdb.Exec(updateGameStateStmt, gsb, stat, gID); err != nil {
 		return fmt.Errorf("failed to update game state: %w", err)
 	}
 

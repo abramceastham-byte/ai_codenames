@@ -336,7 +336,7 @@ type DB interface {
 	AssignRole(GameID, *PlayerRole) error
 
 	PlayersInGame(gID GameID) ([]*PlayerRole, error)
-	UpdateState(GameID, *GameState) error
+	UpdateState(GameID, *GameState, GameStatus) error
 	BatchPlayerNames([]PlayerID) (map[PlayerID]string, error)
 	Player(id PlayerID) (string, error)
 }

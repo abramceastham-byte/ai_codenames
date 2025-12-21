@@ -2,11 +2,14 @@
 	import type { Card } from '$lib/types';
 	import { AGENT_RED, AGENT_BLUE, AGENT_ASSASSIN, AGENT_BYSTANDER } from '$lib/types';
 
-	let { card, isSpymaster, onClick } = $props<{
+	interface Props {
 		card: Card;
 		isSpymaster: boolean;
+		isGameOver: boolean;
 		onClick: () => void;
-	}>();
+	}
+
+	let { card, isSpymaster, onClick, isGameOver }: Props = $props();
 
 	// Determine visual style based on state
 	// If revealed: Show actual agent color
@@ -29,7 +32,7 @@
 			}
 		}
 
-		if (isSpymaster) {
+		if (isSpymaster || isGameOver) {
 			switch (card.agent) {
 				case AGENT_RED:
 					return 'bg-red-100 text-red-900 border-red-200';
@@ -48,12 +51,11 @@
 	}
 
 	const classes = $derived(getBgColor());
+	const revealedClasses = $derived(card.revealed ? '' : 'cursor-pointer hover:-translate-y-0.5 hover:shadow-md');
 </script>
 
 <button
-	class="flex aspect-[4/3] w-full flex-col items-center justify-center rounded-lg border-2 p-2 shadow-sm transition-all duration-200 {classes} {card.revealed
-		? ''
-		: 'cursor-pointer hover:-translate-y-0.5 hover:shadow-md'}"
+	class="flex aspect-[4/3] w-full flex-col items-center justify-center rounded-lg border-2 p-2 shadow-sm transition-all duration-200 {classes} {revealedClasses}"
 	onclick={onClick}
 	disabled={card.revealed}
 >
@@ -70,6 +72,6 @@
 	<span
 		class="w-full text-center leading-tight font-bold break-words uppercase md:text-lg lg:text-xl"
 	>
-		{card.codeword}
+		{card.codeword.replaceAll("_", " ")}
 	</span>
 </button>

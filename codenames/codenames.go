@@ -162,11 +162,11 @@ func Unrevealed(cards []Card) []Card {
 
 // Revealed takes in a fully-filled out Spymaster board, and returns a new
 // board where the card Agent is only populated for revealed cards.
-func Revealed(b *Board) *Board {
+func Revealed(b *Board, status GameStatus) *Board {
 	out := make([]Card, len(b.Cards))
 	copy(out, b.Cards)
 	for i, card := range b.Cards {
-		if !card.Revealed {
+		if !card.Revealed && status != Finished {
 			out[i].Agent = UnknownAgent
 		}
 	}
@@ -176,9 +176,7 @@ func Revealed(b *Board) *Board {
 // CloneBoard returns a deep copy of the given board.
 func CloneBoard(b *Board) *Board {
 	out := make([]Card, len(b.Cards))
-	for i, card := range b.Cards {
-		out[i] = card
-	}
+	copy(out, b.Cards)
 	return &Board{Cards: out}
 }
 

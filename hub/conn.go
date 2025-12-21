@@ -3,6 +3,7 @@ package hub
 import (
 	"errors"
 	"log"
+	"net"
 	"time"
 
 	"github.com/bcspragu/Codenames/codenames"
@@ -82,7 +83,7 @@ func (c *connection) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		if err := c.ws.Close(); err != nil {
+		if err := c.ws.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			log.Printf("[write] error closing websocket: %v", err)
 		}
 	}()

@@ -45,7 +45,7 @@
 	<div class="mb-8 grid grid-cols-5 gap-2 md:gap-4">
 		{#if game?.state.board.cards}
 			{#each game.state.board.cards as card (card.codeword)}
-				<CardComponent {card} {isSpymaster} onClick={() => handleCardClick(card)} />
+				<CardComponent {card} {isSpymaster} {isGameOver} onClick={() => handleCardClick(card)} />
 			{/each}
 		{/if}
 	</div>
