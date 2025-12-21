@@ -148,9 +148,8 @@ func (g *Game) Move(mv *Move) (*codenames.GameState, codenames.GameStatus, error
 	}
 
 	state := codenames.Playing
-	if over, winningTeam := g.GameOver(); over {
+	if over, _ := g.GameOver(); over {
 		state = codenames.Finished
-		g.state.WinningTeam = winningTeam
 	}
 
 	return g.state, state, nil
