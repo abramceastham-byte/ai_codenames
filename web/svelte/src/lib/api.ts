@@ -1,8 +1,9 @@
 import type { Game, Player, Team, Role, PlayerID } from './types';
+import { PUBLIC_API_URL } from '$env/static/public';
 
 class Api {
 	async post<T>(url: string, body: any): Promise<T> {
-		const res = await fetch(`http://localhost:8080${url}`, {
+		const res = await fetch(`${PUBLIC_API_URL}${url}`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
@@ -16,7 +17,7 @@ class Api {
 	}
 
 	async get<T>(url: string): Promise<T> {
-		const res = await fetch(`http://localhost:8080${url}`, { credentials: 'include' });
+		const res = await fetch(`${PUBLIC_API_URL}${url}`, { credentials: 'include' });
 		if (!res.ok) throw new Error(res.statusText);
 		return res.json();
 	}

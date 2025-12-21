@@ -52,7 +52,6 @@ npm run dev
 ```
 
 The app will be available at `http://localhost:5173`.
-All requests to `/api/*` are proxied to `http://localhost:8080` via `vite.config.ts`.
 
 ## 🏗 Architecture
 

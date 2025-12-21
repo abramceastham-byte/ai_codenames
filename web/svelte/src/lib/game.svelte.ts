@@ -2,6 +2,8 @@ import { type Game, type Player, type Team, type WsMessage } from './types';
 import { api } from './api';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
+import { PUBLIC_API_URL } from '$env/static/public';
+
 
 export class GameStore {
 	// User State
@@ -59,9 +61,9 @@ export class GameStore {
 			this.ws.close();
 		}
 
-		// Use current host but upgrade protocol
-		const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const url = `${proto}//localhost:8080/api/game/${gameId}/ws`;
+		const apiUrl = URL.parse(PUBLIC_API_URL)
+		const proto = apiUrl?.protocol === 'https:' ? 'wss:' : 'ws:';
+		const url = `${proto}//${apiUrl?.host}/api/game/${gameId}/ws`;
 
 		this.ws = new WebSocket(url);
 		this.ws.onopen = () => {
@@ -81,7 +83,6 @@ export class GameStore {
 	}
 
 	handleMessage(msg: WsMessage) {
-		console.log('WS Msg:', msg);
 		if ('game' in msg) {
 			this.game = msg.game;
 		}
