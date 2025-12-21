@@ -13,11 +13,22 @@
 	// Check if spymaster view
 	const isSpymaster = $derived(myPlayer?.role === 'SPYMASTER');
 
+	// Track tentative guess
+	let tentativeGuess = $state<string | null>(null);
+
 	async function handleCardClick(card: Card) {
 		if (!game || !isMyTurn || myPlayer?.role !== 'OPERATIVE' || card.revealed) return;
 
 		try {
-			await api.sendGuess(game.id, card.codeword);
+			// If clicking the same card as tentative, confirm it
+			if (tentativeGuess === card.codeword) {
+				await api.sendGuess(game.id, card.codeword, true);
+				tentativeGuess = null;
+			} else {
+				// Otherwise, send as tentative guess
+				await api.sendGuess(game.id, card.codeword, false);
+				tentativeGuess = card.codeword;
+			}
 		} catch (e) {
 			alert('Failed to submit guess: ' + e);
 		}
@@ -45,7 +56,7 @@
 	<div class="mb-8 grid grid-cols-5 gap-1 sm:gap-4">
 		{#if game?.state.board.cards}
 			{#each game.state.board.cards as card (card.codeword)}
-				<CardComponent {card} {isSpymaster} {isGameOver} onClick={() => handleCardClick(card)} />
+				<CardComponent {card} {isSpymaster} {isGameOver} isTentative={tentativeGuess === card.codeword} onClick={() => handleCardClick(card)} />
 			{/each}
 		{/if}
 	</div>

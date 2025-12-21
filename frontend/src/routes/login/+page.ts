@@ -13,7 +13,7 @@ export const load: PageLoad = async () => {
 		}
 	}
 	return {
-		hasRedirect: !!redirect,
+		hasRedirectToGame: redirect?.startsWith('/game/') ?? false,
 	}
 };
 

@@ -69,8 +69,8 @@ class Api {
 		return this.post(`/api/game/${gameId}/clue`, { word, count });
 	}
 
-	async sendGuess(gameId: string, guess: string): Promise<{ success: boolean }> {
-		return this.post(`/api/game/${gameId}/guess`, { guess, confirmed: true });
+	async sendGuess(gameId: string, guess: string, confirmed: boolean = true): Promise<{ success: boolean }> {
+		return this.post(`/api/game/${gameId}/guess`, { guess, confirmed });
 	}
 }
 

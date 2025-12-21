@@ -879,12 +879,16 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 	if !req.Confirmed {
 		// If it's not confirmed (e.g. it's just tentative), so we shouldn't count
 		// the votes.
-		return nil
+		return jsonResp(w, struct {
+			Success bool `json:"success"`
+		}{true})
 	}
 
 	guess, hasConsensus := s.consensus.RecordVote(g.ID, p.ID, req.Guess, countVoters(prs, g.State.ActiveTeam))
 	if !hasConsensus {
-		return nil
+		return jsonResp(w, struct {
+			Success bool `json:"success"`
+		}{true})
 	}
 
 	if _, ok := findCard(g.State.Board.Cards, guess); !ok {
