@@ -39,7 +39,12 @@
 		return rS === 1 && bS === 1 && rO > 0 && bO > 0;
 	});
 
+	const unassigned = $derived.by(() => getPlayers('', ''))
+
 	const isCreator = $derived(game && gameStore.user && game.created_by === gameStore.user.id);
+	const creatorName = $derived.by(() => {
+		return players.find((p) => game?.created_by === p.player_id.id)?.name ?? 'game creator'
+	})
 </script>
 
 <div class="mx-auto max-w-6xl p-4">
@@ -157,6 +162,20 @@
 	</div>
 
 	<div class="mt-8 text-center text-gray-500">
-		<p>Waiting for players...</p>
+		{#if unassigned.length > 0}
+			{#if unassigned.length === 1}
+			<p>Waiting for role to be assigned to {unassigned[0].name}</p>
+			{:else}
+				<p>Waiting for roles to be assigned to {unassigned.map((p) => p.name).join(', ')}</p>
+			{/if}
+		{:else}
+			{#if canStart}
+				<p>Waiting for {creatorName} to start the game...</p>
+			{:else if players.length < 4}
+				<p>Waiting for more players...</p>
+			{:else}
+				<p>Waiting for all roles to be filled...</p>
+			{/if}
+		{/if}
 	</div>
 </div>

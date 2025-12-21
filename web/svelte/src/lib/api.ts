@@ -30,8 +30,8 @@ class Api {
 		return this.get('/api/user');
 	}
 
-	async createGame(): Promise<{ id: string }> {
-		return this.post('/api/game', {});
+	async createGame(privateGame: boolean): Promise<{ id: string }> {
+		return this.post('/api/game', {private: privateGame});
 	}
 
 	async getPendingGames(): Promise<string[]> {

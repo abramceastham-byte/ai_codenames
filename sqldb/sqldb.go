@@ -18,10 +18,10 @@ import (
 
 var (
 	// Game statements
-	createGameStmt      = `INSERT INTO Games (id, status, creator_id, state) VALUES (?, ?, ?, ?)`
+	createGameStmt      = `INSERT INTO Games (id, status, creator_id, state, private) VALUES (?, ?, ?, ?, ?)`
 	gameExistsStmt      = `SELECT EXISTS(SELECT 1 FROM Games WHERE id = ?)`
 	getGameStmt         = `SELECT id, status, creator_id, state FROM Games WHERE id = ?`
-	getPendingGamesStmt = `SELECT id FROM Games WHERE status = 'PENDING' ORDER BY id`
+	getPendingGamesStmt = `SELECT id FROM Games WHERE status = 'PENDING' AND private = 0 ORDER BY id`
 	startGameStmt       = `
 UPDATE Games
 SET status = 'PLAYING'
@@ -63,9 +63,6 @@ FROM GamePlayers
 JOIN Players
 	ON GamePlayers.player_id = Players.id
 WHERE GamePlayers.game_id = ?`
-
-	// Game history statements (currently unused)
-	updateGameHistoryStmt = `INSERT INTO GameHistory (game_id, event) VALUES (?, ?)`
 )
 
 // DB implements the Codenames database API, backed by a SQLite database.
@@ -125,7 +122,7 @@ func (s *DB) Close() error {
 	return s.sdb.Close()
 }
 
-func (s *DB) NewGame(g *codenames.Game) (codenames.GameID, error) {
+func (s *DB) NewGame(g *codenames.Game, private bool) (codenames.GameID, error) {
 	gsb, err := gameStateBytes(g.State)
 	if err != nil {
 		return "", fmt.Errorf("failed to serialize game state: %w", err)
@@ -137,7 +134,7 @@ func (s *DB) NewGame(g *codenames.Game) (codenames.GameID, error) {
 			return err
 		}
 
-		_, err = tx.Exec(createGameStmt, string(id), codenames.Pending, string(g.CreatedBy), gsb)
+		_, err = tx.Exec(createGameStmt, string(id), codenames.Pending, string(g.CreatedBy), gsb, private)
 		if err != nil {
 			return fmt.Errorf("failed to create game: %w", err)
 		}

@@ -15,30 +15,33 @@ const (
 )
 
 type DB struct {
-	ids         map[idNamespace]int
-	games       map[codenames.GameID]*codenames.Game
-	users       map[codenames.UserID]*codenames.User
-	robots      map[codenames.RobotID]*codenames.Robot
-	playerRoles map[codenames.GameID][]*codenames.PlayerRole
+	ids           map[idNamespace]int
+	games         map[codenames.GameID]*codenames.Game
+	isGamePrivate map[codenames.GameID]bool
+	users         map[codenames.UserID]*codenames.User
+	robots        map[codenames.RobotID]*codenames.Robot
+	playerRoles   map[codenames.GameID][]*codenames.PlayerRole
 }
 
 func New() *DB {
 	return &DB{
-		ids:         make(map[idNamespace]int),
-		games:       make(map[codenames.GameID]*codenames.Game),
-		users:       make(map[codenames.UserID]*codenames.User),
-		robots:      make(map[codenames.RobotID]*codenames.Robot),
-		playerRoles: make(map[codenames.GameID][]*codenames.PlayerRole),
+		ids:           make(map[idNamespace]int),
+		games:         make(map[codenames.GameID]*codenames.Game),
+		isGamePrivate: make(map[codenames.GameID]bool),
+		users:         make(map[codenames.UserID]*codenames.User),
+		robots:        make(map[codenames.RobotID]*codenames.Robot),
+		playerRoles:   make(map[codenames.GameID][]*codenames.PlayerRole),
 	}
 }
 
-func (db *DB) NewGame(g *codenames.Game) (codenames.GameID, error) {
+func (db *DB) NewGame(g *codenames.Game, private bool) (codenames.GameID, error) {
 	gID := codenames.GameID(db.newID(gameID))
 
 	gc := g.Clone()
 	gc.ID = gID
 	gc.Status = codenames.Pending
 	db.games[gID] = gc
+	db.isGamePrivate[gID] = private
 	db.playerRoles[gID] = []*codenames.PlayerRole{}
 
 	return gID, nil
@@ -93,8 +96,8 @@ func (db *DB) Robot(rID codenames.RobotID) (*codenames.Robot, error) {
 
 func (db *DB) PendingGames() ([]codenames.GameID, error) {
 	var pending []codenames.GameID
-	for _, g := range db.games {
-		if g.Status == codenames.Pending {
+	for gID, g := range db.games {
+		if g.Status == codenames.Pending && !db.isGamePrivate[gID] {
 			pending = append(pending, g.ID)
 		}
 	}

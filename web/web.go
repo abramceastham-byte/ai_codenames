@@ -316,6 +316,13 @@ func (s *Srv) serveCreateGame(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	var req struct {
+		Private bool `json:"private"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return httperr.BadRequest("failed to decode create game request: %w", err)
+	}
 
 	uID, ok := p.ID.AsUserID()
 	if !ok {
@@ -337,7 +344,7 @@ func (s *Srv) serveCreateGame(w http.ResponseWriter, r *http.Request) error {
 			ActiveRole:   codenames.SpymasterRole,
 			Board:        boardgen.New(ar, s.r),
 		},
-	})
+	}, req.Private)
 	if err != nil {
 		return httperr.
 			Internal("failed to create game for user %q: %w", uID, err).
@@ -413,6 +420,30 @@ func (s *Srv) serveJoinGame(w http.ResponseWriter, r *http.Request, p *codenames
 			WithMessage("failed to join game")
 	}
 
+	// Load the updated list of players in the game.
+	prs, err := s.db.PlayersInGame(game.ID)
+	if err != nil {
+		return httperr.
+			Internal("failed to load players in game %q: %w", game.ID, err).
+			WithMessage("failed to load players in game")
+	}
+
+	players, err := s.toPlayers(prs)
+	if err != nil {
+		return httperr.
+			Internal("failed to convert players in game %q: %w", game.ID, err).
+			WithMessage("failed to make players")
+	}
+
+	// This is kinda a hack because they technically don't have a role assigned, but it's fine for our use case.
+	if err := s.broadcastMessage(game, prs, func(g *codenames.Game) any {
+		return &RoleAssigned{
+			Players: players,
+		}
+	}); err != nil {
+		log.Printf("failed to send message for role assigned: %v", err)
+	}
+
 	return jsonResp(w, struct {
 		Success bool `json:"success"`
 	}{true})
@@ -460,14 +491,15 @@ func (s *Srv) serveAssignRole(w http.ResponseWriter, r *http.Request, creator *c
 		if !ok {
 			rc = make(map[codenames.Team]int)
 		}
-		if pr.PlayerID == pID {
-			return httperr.
-				BadRequest("player %q tried to join game %q as %q %q, already joined as %q %q", pID, game.ID, desiredTeam, desiredRole, pr.Team, pr.Role).
-				WithMessage(fmt.Sprintf("can't join game as %q %q, already joined as %q %q", desiredTeam, desiredRole, pr.Team, pr.Role))
-		}
+		// Allow players to change roles
+		// if pr.PlayerID == pID {
+		// 	return httperr.
+		// 		BadRequest("player %q tried to join game %q as %q %q, already joined as %q %q", pID, game.ID, desiredTeam, desiredRole, pr.Team, pr.Role).
+		// 		WithMessage(fmt.Sprintf("can't join game as %q %q, already joined as %q %q", desiredTeam, desiredRole, pr.Team, pr.Role))
+		// }
 		if pr.Role == codenames.SpymasterRole && rc[pr.Team] > 1 {
 			return httperr.
-				Internal("game %q in bad state, has multiple players has %q spymaster", game.ID, pr.Team).
+				Internal("game %q in bad state, team %q has multiple spymaster", game.ID, pr.Team).
 				WithMessage(fmt.Sprintf("multiple players set as %q spymaster", pr.Team))
 		}
 		if pr.Role == codenames.OperativeRole && rc[pr.Team] > maxOperativesPerTeam {

@@ -6,6 +6,7 @@
 	import { resolve } from '$app/paths';
 
 	let pendingGames = $state<string[]>([]);
+	let privateGame = $state(false);
 	let joinId = $state('');
 	let loading = $state(false);
 
@@ -30,7 +31,7 @@
 	async function createGame() {
 		loading = true;
 		try {
-			const res = await api.createGame();
+			const res = await api.createGame(privateGame);
 			await goto(resolve(`/game/${res.id}`));
 		} catch (e) {
 			alert('Failed to create game: ' + e);
@@ -84,7 +85,7 @@
 
 				{#if pendingGames && pendingGames.length > 0}
 					<div class="mt-6">
-						<h3 class="mb-2 text-sm font-medium text-gray-500">Pending Games</h3>
+						<h3 class="mb-2 text-sm font-medium text-gray-500">Recently created lobbies</h3>
 						<ul class="space-y-2">
 							{#each pendingGames as gameId (gameId)}
 								<li>
@@ -99,14 +100,18 @@
 						</ul>
 					</div>
 				{:else}
-					<p class="mt-4 text-sm text-gray-500">No public pending games found.</p>
+					<p class="mt-4 text-sm text-gray-500">No recent lobbies found.</p>
 				{/if}
 			</div>
 
 			<!-- Create Game Section -->
 			<div class="rounded-lg bg-white p-6 shadow">
-				<h2 class="mb-4 text-xl font-semibold text-gray-800">Create New Game</h2>
-				<p class="mb-4 text-gray-600">Start a new match as the administrator.</p>
+				<h2 class="mb-4 text-xl font-semibold text-gray-800">New Game</h2>
+				<p class="mb-4 text-gray-600">Start a new match</p>
+				<div class="my-2">
+					<input name="private" type="checkbox" bind:checked={privateGame} />
+			    <label for="private">Private?</label>
+		    </div>
 				<button
 					onclick={createGame}
 					disabled={loading}

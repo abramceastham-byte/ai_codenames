@@ -1,5 +1,5 @@
-export type Team = 'RED' | 'BLUE';
-export type Role = 'SPYMASTER' | 'OPERATIVE';
+export type Team = 'RED' | 'BLUE' | '';
+export type Role = 'SPYMASTER' | 'OPERATIVE' | '';
 export type Agent = number; // 0=Unknown, 1=Red, 2=Blue, 3=Bystander, 4=Assassin
 
 // Constants for Agent types to make code readable
@@ -39,7 +39,7 @@ export interface GameState {
 	clues: SpymasterClue[];
 	num_guesses_left: number;
 	starting_team: Team;
-	winning_team: Team | '';
+	winning_team: Team;
 }
 
 export interface SpymasterClue {

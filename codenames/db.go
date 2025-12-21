@@ -270,6 +270,13 @@ type PlayerRole struct {
 	RoleAssigned bool     `json:"role_assigned"`
 }
 
+func (pr *PlayerRole) String() string {
+	if !pr.RoleAssigned {
+		return "[unassigned]"
+	}
+	return fmt.Sprintf("[%s] %s", pr.Team, pr.Role)
+}
+
 func (pr *PlayerRole) Clone() *PlayerRole {
 	if pr == nil {
 		return nil
@@ -328,7 +335,7 @@ type DB interface {
 	NewRobot(name string) (RobotID, error)
 	Robot(RobotID) (*Robot, error)
 
-	NewGame(*Game) (GameID, error)
+	NewGame(g *Game, private bool) (GameID, error)
 	StartGame(gID GameID) error
 	PendingGames() ([]GameID, error)
 	Game(GameID) (*Game, error)

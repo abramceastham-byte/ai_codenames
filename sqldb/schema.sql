@@ -1,5 +1,5 @@
 CREATE TABLE Users (
-    id TEXT NOT NULL,  -- Based on the user's cookie
+    id TEXT NOT NULL,
     display_name TEXT NOT NULL,  -- Arbitary, user specified
     PRIMARY KEY (id)
 );
@@ -9,6 +9,7 @@ CREATE TABLE Games (
     status TEXT NOT NULL,  -- Enum: PENDING, PLAYING, FINISHED
     state BLOB NOT NULL,
     creator_id TEXT NOT NULL,
+    private BOOLEAN NOT NULL CHECK (private IN (0, 1)),
     FOREIGN KEY (creator_id) REFERENCES Users(id),
     PRIMARY KEY (id)
 );
