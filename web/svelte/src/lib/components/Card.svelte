@@ -55,13 +55,13 @@
 </script>
 
 <button
-	class="flex aspect-[4/3] w-full flex-col items-center justify-center rounded-lg border-2 p-2 shadow-sm transition-all duration-200 {classes} {revealedClasses}"
+	class="flex aspect-[4/3] w-full flex-col items-center justify-center rounded-lg border-2 sm:p-2 sm:shadow-sm transition-all duration-200 {classes} {revealedClasses}"
 	onclick={onClick}
 	disabled={card.revealed}
 >
 	{#if card.revealed}
 		<!-- Maybe an icon for the type? -->
-		<span class="mb-1 text-xs font-bold tracking-wider uppercase opacity-75">
+		<span class="mb-1 text-xs font-bold tracking-wider uppercase opacity-75 hidden sm:block">
 			{#if card.agent === AGENT_RED}RED AGENT
 			{:else if card.agent === AGENT_BLUE}BLUE AGENT
 			{:else if card.agent === AGENT_ASSASSIN}ASSASSIN
@@ -70,7 +70,7 @@
 		</span>
 	{/if}
 	<span
-		class="w-full text-center leading-tight font-bold break-words uppercase md:text-lg lg:text-xl"
+		class="w-full text-center leading-tight sm:font-bold break-words uppercase text-xs sm:text-lg lg:text-xl"
 	>
 		{card.codeword.replaceAll("_", " ")}
 	</span>

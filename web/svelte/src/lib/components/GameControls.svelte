@@ -36,7 +36,7 @@
 		</div>
 	{:else if myPlayer?.role === 'SPYMASTER'}
 		<form
-			class="flex items-end gap-4"
+			class="flex sm:items-end gap-4 flex-col sm:flex-row"
 			onsubmit={(e) => {
 				e.preventDefault();
 				submitClue();

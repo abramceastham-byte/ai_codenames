@@ -32,7 +32,7 @@
 <div class="mx-auto max-w-6xl p-4">
 	<div class="mb-4 flex items-center justify-between">
 		<button
-			onclick={() => goto(resolve('/lobby'))}
+			onclick={() => goto(resolve('/'))}
 			class="font-medium text-gray-500 hover:text-gray-800"
 		>
 			&larr; Lobby
@@ -42,7 +42,7 @@
 
 	<GameInfo />
 
-	<div class="mb-8 grid grid-cols-5 gap-2 md:gap-4">
+	<div class="mb-8 grid grid-cols-5 gap-1 sm:gap-4">
 		{#if game?.state.board.cards}
 			{#each game.state.board.cards as card (card.codeword)}
 				<CardComponent {card} {isSpymaster} {isGameOver} onClick={() => handleCardClick(card)} />
@@ -60,7 +60,7 @@
 				</h2>
 				<!-- We assume winning team is handled elsewhere or inferable, but for now simple message -->
 				<button
-					onclick={() => goto(resolve('/lobby'))}
+					onclick={() => goto(resolve('/'))}
 					class="mt-4 rounded bg-white px-6 py-2 font-bold text-stone-900 hover:bg-gray-200"
 				>
 					Back to Lobby

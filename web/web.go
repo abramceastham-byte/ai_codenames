@@ -124,7 +124,7 @@ func (s *Srv) initMux() *mux.Router {
 		{
 			path:        "/api/game/{id}/join",
 			method:      http.MethodPost,
-			handlerFunc: s.requireGameAuth(s.serveJoinGame, isGamePending()),
+			handlerFunc: s.requireGameAuth(s.serveJoinGame),
 		},
 		// Assign roles
 		{
@@ -412,6 +412,12 @@ func (s *Srv) serveJoinGame(w http.ResponseWriter, r *http.Request, p *codenames
 		return jsonResp(w, struct {
 			Success bool `json:"success"`
 		}{true})
+	}
+
+	if game.Status != codenames.Pending {
+		return jsonResp(w, struct {
+			Success bool `json:"success"`
+		}{false})
 	}
 
 	if err := s.db.JoinGame(game.ID, p.ID); err != nil {

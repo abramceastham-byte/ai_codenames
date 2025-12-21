@@ -69,6 +69,16 @@
 		</div>
 	</div>
 
+	{#snippet joinButton(team: Team, role: Role, classes: string)}
+		<button
+			onclick={() => joinRole(team, role)}
+			class="{classes} rounded-sm px-2 py-1 text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+			disabled={getPlayers(team, role).length > (role === 'OPERATIVE' ? 9 : 0)}
+		>
+			JOIN
+	</button>
+	{/snippet}
+
 	<div class="grid grid-cols-2 gap-8">
 		<!-- RED TEAM -->
 		<div class="rounded-xl border-4 border-red-200 bg-red-50 p-6">
@@ -77,12 +87,7 @@
 			<div class="mb-6">
 				<div class="mb-2 flex items-center justify-between">
 					<h3 class="font-semibold text-red-900">Spymaster</h3>
-					<button
-						onclick={() => joinRole('RED', 'SPYMASTER')}
-						class="rounded-sm bg-red-200 px-2 py-1 text-xs font-bold text-red-800 hover:bg-red-300"
-					>
-						JOIN
-					</button>
+					{@render joinButton('RED', 'SPYMASTER', 'bg-red-200 text-red-800 hover:bg-red-300')}
 				</div>
 				<div class="min-h-[60px] rounded bg-white p-4 shadow-sm">
 					{#each getPlayers('RED', 'SPYMASTER') as p (p.player_id.id)}
@@ -97,12 +102,7 @@
 			<div>
 				<div class="mb-2 flex items-center justify-between">
 					<h3 class="font-semibold text-red-900">Operatives</h3>
-					<button
-						onclick={() => joinRole('RED', 'OPERATIVE')}
-						class="rounded-sm bg-red-200 px-2 py-1 text-xs font-bold text-red-800 hover:bg-red-300"
-					>
-						JOIN
-					</button>
+					{@render joinButton('RED', 'OPERATIVE', 'bg-red-200 text-red-800 hover:bg-red-300')}
 				</div>
 				<div class="min-h-[100px] rounded bg-white p-4 shadow-sm">
 					{#each getPlayers('RED', 'OPERATIVE') as p (p.player_id.id)}
@@ -122,12 +122,7 @@
 			<div class="mb-6">
 				<div class="mb-2 flex items-center justify-between">
 					<h3 class="font-semibold text-blue-900">Spymaster</h3>
-					<button
-						onclick={() => joinRole('BLUE', 'SPYMASTER')}
-						class="rounded-sm bg-blue-200 px-2 py-1 text-xs font-bold text-blue-800 hover:bg-blue-300"
-					>
-						JOIN
-					</button>
+					{@render joinButton('BLUE', 'SPYMASTER', 'bg-blue-200 text-blue-800 hover:bg-blue-300')}
 				</div>
 				<div class="min-h-[60px] rounded bg-white p-4 shadow-sm">
 					{#each getPlayers('BLUE', 'SPYMASTER') as p (p.player_id.id)}
@@ -142,12 +137,7 @@
 			<div>
 				<div class="mb-2 flex items-center justify-between">
 					<h3 class="font-semibold text-blue-900">Operatives</h3>
-					<button
-						onclick={() => joinRole('BLUE', 'OPERATIVE')}
-						class="rounded-sm bg-blue-200 px-2 py-1 text-xs font-bold text-blue-800 hover:bg-blue-300"
-					>
-						JOIN
-					</button>
+					{@render joinButton('BLUE', 'OPERATIVE', 'bg-blue-200 text-blue-800 hover:bg-blue-300')}
 				</div>
 				<div class="min-h-[100px] rounded bg-white p-4 shadow-sm">
 					{#each getPlayers('BLUE', 'OPERATIVE') as p (p.player_id.id)}

@@ -42,7 +42,12 @@ export class GameStore {
 		const res = await api.createUser(name);
 		if (res.success) {
 			this.user = { id: res.user_id, name };
-			await goto(resolve('/lobby'));
+			const redirect = new URLSearchParams(window.location.search).get('redirect')
+			if (redirect && redirect.startsWith('/')) {
+				await goto(redirect);
+			} else {
+				await goto(resolve('/'));
+			}
 		}
 	}
 
