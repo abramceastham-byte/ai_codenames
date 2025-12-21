@@ -11,57 +11,57 @@
 
 	async function joinRole(team: Team, role: Role) {
 		if (!game || !user || !gameStore.user) return;
-        // Need to construct PlayerID properly
+		// Need to construct PlayerID properly
 		await api.assignRole(game.id, { player_type: 'HUMAN', id: gameStore.user.id }, team, role);
-		// Update players list locally or wait for WS? 
-        // WS usually sends updates, but we also re-fetch in api wrapper usually.
-        // Actually api.assignRole returns Player[].
-        const newPlayers = await api.getGamePlayers(game.id);
-        gameStore.players = newPlayers;
+		// Update players list locally or wait for WS?
+		// WS usually sends updates, but we also re-fetch in api wrapper usually.
+		// Actually api.assignRole returns Player[].
+		const newPlayers = await api.getGamePlayers(game.id);
+		gameStore.players = newPlayers;
 	}
 
 	async function startGame() {
 		if (!game) return;
 		await api.startGame(game.id);
 	}
-    
-    async function startRandom() {
-        if (!game) return;
-        await api.startGame(game.id, true);
-    }
-    
-    // Derived check for startability
-    const canStart = $derived.by(() => {
-        const rS = getPlayers('RED', 'SPYMASTER').length;
-        const rO = getPlayers('RED', 'OPERATIVE').length;
-        const bS = getPlayers('BLUE', 'SPYMASTER').length;
-        const bO = getPlayers('BLUE', 'OPERATIVE').length;
-        return rS === 1 && bS === 1 && rO > 0 && bO > 0;
-    });
 
-    const isCreator = $derived(game && gameStore.user && game.created_by === gameStore.user.id);
+	async function startRandom() {
+		if (!game) return;
+		await api.startGame(game.id, true);
+	}
+
+	// Derived check for startability
+	const canStart = $derived.by(() => {
+		const rS = getPlayers('RED', 'SPYMASTER').length;
+		const rO = getPlayers('RED', 'OPERATIVE').length;
+		const bS = getPlayers('BLUE', 'SPYMASTER').length;
+		const bO = getPlayers('BLUE', 'OPERATIVE').length;
+		return rS === 1 && bS === 1 && rO > 0 && bO > 0;
+	});
+
+	const isCreator = $derived(game && gameStore.user && game.created_by === gameStore.user.id);
 </script>
 
 <div class="mx-auto max-w-6xl p-4">
 	<div class="mb-8 flex items-center justify-between">
 		<h1 class="text-3xl font-bold text-gray-800">Game Setup: {game?.id}</h1>
-        <div class="space-x-2">
-            {#if isCreator}
-                 <button
-                    onclick={startRandom}
-                    class="rounded bg-purple-600 px-4 py-2 font-bold text-white hover:bg-purple-700"
-                >
-                    Randomize & Start
-                </button>
-                <button
-                    onclick={startGame}
-                    disabled={!canStart}
-                    class="rounded bg-green-600 px-4 py-2 font-bold text-white hover:bg-green-700 disabled:bg-gray-400"
-                >
-                    Start Game
-                </button>
-            {/if}
-        </div>
+		<div class="space-x-2">
+			{#if isCreator}
+				<button
+					onclick={startRandom}
+					class="rounded bg-purple-600 px-4 py-2 font-bold text-white hover:bg-purple-700"
+				>
+					Randomize & Start
+				</button>
+				<button
+					onclick={startGame}
+					disabled={!canStart}
+					class="rounded bg-green-600 px-4 py-2 font-bold text-white hover:bg-green-700 disabled:bg-gray-400"
+				>
+					Start Game
+				</button>
+			{/if}
+		</div>
 	</div>
 
 	<div class="grid grid-cols-2 gap-8">
@@ -82,9 +82,9 @@
 				<div class="min-h-[60px] rounded bg-white p-4 shadow-sm">
 					{#each getPlayers('RED', 'SPYMASTER') as p}
 						<div class="flex items-center gap-2">
-                            <div class="h-2 w-2 rounded-full bg-red-500"></div>
-                            {p.name}
-                        </div>
+							<div class="h-2 w-2 rounded-full bg-red-500"></div>
+							{p.name}
+						</div>
 					{/each}
 				</div>
 			</div>
@@ -102,9 +102,9 @@
 				<div class="min-h-[100px] rounded bg-white p-4 shadow-sm">
 					{#each getPlayers('RED', 'OPERATIVE') as p}
 						<div class="flex items-center gap-2">
-                            <div class="h-2 w-2 rounded-full bg-red-500"></div>
-                            {p.name}
-                        </div>
+							<div class="h-2 w-2 rounded-full bg-red-500"></div>
+							{p.name}
+						</div>
 					{/each}
 				</div>
 			</div>
@@ -127,9 +127,9 @@
 				<div class="min-h-[60px] rounded bg-white p-4 shadow-sm">
 					{#each getPlayers('BLUE', 'SPYMASTER') as p}
 						<div class="flex items-center gap-2">
-                            <div class="h-2 w-2 rounded-full bg-blue-500"></div>
-                            {p.name}
-                        </div>
+							<div class="h-2 w-2 rounded-full bg-blue-500"></div>
+							{p.name}
+						</div>
 					{/each}
 				</div>
 			</div>
@@ -147,16 +147,16 @@
 				<div class="min-h-[100px] rounded bg-white p-4 shadow-sm">
 					{#each getPlayers('BLUE', 'OPERATIVE') as p}
 						<div class="flex items-center gap-2">
-                            <div class="h-2 w-2 rounded-full bg-blue-500"></div>
-                            {p.name}
-                        </div>
+							<div class="h-2 w-2 rounded-full bg-blue-500"></div>
+							{p.name}
+						</div>
 					{/each}
 				</div>
 			</div>
 		</div>
 	</div>
-    
-    <div class="mt-8 text-center text-gray-500">
-        <p>Waiting for players...</p>
-    </div>
+
+	<div class="mt-8 text-center text-gray-500">
+		<p>Waiting for players...</p>
+	</div>
 </div>

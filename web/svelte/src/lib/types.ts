@@ -43,8 +43,8 @@ export interface GameState {
 }
 
 export interface SpymasterClue {
-	clue: Clue
-	team: Team
+	clue: Clue;
+	team: Team;
 }
 
 export interface Game {

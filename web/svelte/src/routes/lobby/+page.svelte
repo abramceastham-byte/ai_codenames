@@ -6,14 +6,14 @@
 
 	let pendingGames = $state<string[]>([]);
 	let joinId = $state('');
-    let loading = $state(false);
+	let loading = $state(false);
 
 	onMount(async () => {
 		if (!gameStore.user) {
-      if (!gameStore.user) {
-		    goto('/');
-        return;
-      }
+			if (!gameStore.user) {
+				goto('/');
+				return;
+			}
 		}
 		loadGames();
 	});
@@ -27,28 +27,28 @@
 	}
 
 	async function createGame() {
-        loading = true;
+		loading = true;
 		try {
 			const res = await api.createGame();
 			await goto(`/game/${res.id}`);
 		} catch (e) {
 			alert('Failed to create game: ' + e);
 		} finally {
-            loading = false;
-        }
+			loading = false;
+		}
 	}
 
 	async function joinGame(id: string) {
-        if (!id) return;
-        loading = true;
+		if (!id) return;
+		loading = true;
 		try {
 			await api.joinGame(id);
 			await goto(`/game/${id}`);
 		} catch (e) {
 			alert('Failed to join game: ' + e);
 		} finally {
-            loading = false;
-        }
+			loading = false;
+		}
 	}
 </script>
 
@@ -70,7 +70,7 @@
 						type="text"
 						bind:value={joinId}
 						placeholder="Game ID"
-						class="flex-1 rounded border border-gray-300 p-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+						class="flex-1 rounded border border-gray-300 p-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
 					/>
 					<button
 						onclick={() => joinGame(joinId)}

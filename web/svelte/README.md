@@ -35,6 +35,7 @@ src/
 ### Prerequisites
 
 1.  **Go Backend**: The frontend expects the API server to be running on port 8080.
+
     ```bash
     # From project root
     go run ./cmd/codenames-server --addr :8080
@@ -56,16 +57,20 @@ All requests to `/api/*` are proxied to `http://localhost:8080` via `vite.config
 ## 🏗 Architecture
 
 ### State Management (`game.svelte.ts`)
+
 We use a global singleton `GameStore` class powered by Svelte 5 Runes. It handles:
+
 - **User Identity**: Persisted/Restored via API.
 - **WebSocket Connection**: Automatically connects/reconnects when entering a game.
 - **Game State**: Reactive updates from WS messages (`GAME_START`, `CLUE_GIVEN`, `GUESS_GIVEN`).
 
 ### API Layer
+
 - **REST**: `api.ts` handles all HTTP commands (Join, Start, Clue, Guess).
 - **Real-time**: WebSockets push state changes. The store applies these changes directly to the reactive `game` object, instantly updating the UI.
 
 ### Styling
+
 - Visuals use **Tailwind CSS**.
 - **Spymaster View**: Sees all card colors (tinted/muted).
 - **Operative View**: Sees neutral cards until they are revealed.

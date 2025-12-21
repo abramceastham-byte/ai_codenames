@@ -6,7 +6,7 @@ class Api {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
-			credentials: 'include',
+			credentials: 'include'
 		});
 		if (!res.ok) {
 			const text = await res.text();
@@ -16,7 +16,7 @@ class Api {
 	}
 
 	async get<T>(url: string): Promise<T> {
-		const res = await fetch(`http://localhost:8080${url}`, {credentials: 'include'});
+		const res = await fetch(`http://localhost:8080${url}`, { credentials: 'include' });
 		if (!res.ok) throw new Error(res.statusText);
 		return res.json();
 	}
@@ -40,10 +40,10 @@ class Api {
 	async joinGame(id: string): Promise<{ success: boolean }> {
 		return this.post(`/api/game/${id}/join`, {});
 	}
-    
-    async getGame(id: string): Promise<Game> {
-        return this.get(`/api/game/${id}`);
-    }
+
+	async getGame(id: string): Promise<Game> {
+		return this.get(`/api/game/${id}`);
+	}
 
 	async getGamePlayers(id: string): Promise<Player[]> {
 		return this.get(`/api/game/${id}/players`);
@@ -57,7 +57,10 @@ class Api {
 		});
 	}
 
-	async startGame(gameId: string, randomAssignment: boolean = false): Promise<{ success: boolean }> {
+	async startGame(
+		gameId: string,
+		randomAssignment: boolean = false
+	): Promise<{ success: boolean }> {
 		return this.post(`/api/game/${gameId}/start`, { random_assignment: randomAssignment });
 	}
 
