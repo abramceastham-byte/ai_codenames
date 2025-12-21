@@ -11,6 +11,7 @@ require (
 	github.com/gorilla/websocket v1.4.1
 	github.com/namsral/flag v1.7.4-pre
 	github.com/olekukonko/tablewriter v0.0.5
+	github.com/peterbourgon/ff/v4 v4.0.0-beta.1
 	github.com/rs/cors v1.11.1
 	golang.org/x/net v0.0.0-20210326220855-61e056675ecf
 	golang.org/x/text v0.32.0

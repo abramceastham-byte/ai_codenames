@@ -67,8 +67,9 @@ export class GameStore {
 		}
 
 		const apiUrl = URL.parse(PUBLIC_API_URL)
-		const proto = apiUrl?.protocol === 'https:' ? 'wss:' : 'ws:';
-		const url = `${proto}//${apiUrl?.host}/api/game/${gameId}/ws`;
+		const host = apiUrl?.host ?? window.location.host
+		const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+		const url = `${proto}//${host}/api/game/${gameId}/ws`;
 
 		this.ws = new WebSocket(url);
 		this.ws.onopen = () => {

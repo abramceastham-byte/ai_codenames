@@ -245,7 +245,6 @@ func (s *Srv) serveCreatePlayer(w http.ResponseWriter, r *http.Request, pt coden
 	http.SetCookie(w, &http.Cookie{
 		Name:     "Authorization",
 		Value:    encoded,
-		Domain:   "localhost",
 		Path:     "/",
 		Secure:   false,
 		HttpOnly: true,

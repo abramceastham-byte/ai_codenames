@@ -2,7 +2,10 @@ package main
 
 import (
 	"errors"
+	"flag"
+	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,34 +16,50 @@ import (
 	"github.com/bcspragu/Codenames/sqldb"
 	"github.com/bcspragu/Codenames/web"
 	"github.com/gorilla/securecookie"
-	"github.com/namsral/flag"
 	"github.com/rs/cors"
 
-	"math/rand"
+	ff "github.com/peterbourgon/ff/v4"
 )
 
 func main() {
+	if err := run(os.Args); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run(args []string) error {
+	if len(args) == 0 {
+		return errors.New("no args given")
+	}
+
+	fSet := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	var (
-		addr   = flag.String("addr", ":8080", "HTTP service address")
-		dbPath = flag.String("db_path", "codenames.db", "Path to the SQLite DB file")
+		addr   = fSet.String("addr", ":8080", "HTTP service address")
+		dbPath = fSet.String("db_path", "codenames.db", "Path to the SQLite DB file")
+
+		hashKeyPath  = fSet.String("hash_key_path", "hashKey", "Path to the hash key for secure cookies")
+		blockKeyPath = fSet.String("block_key_path", "blockKey", "Path to the block key for secure cookies")
 
 		// AI server-related flags
-		authSecret     = flag.String("auth_secret", "", "Secret string that acts as a 'password' for communicating with the AI server")
-		aiServerScheme = flag.String("ai_server_scheme", "", "The protocol to connect to the Codenames AI server")
-		aiServerAddr   = flag.String("ai_server_addr", "", "The address to connect to the Codenames AI server")
+		authSecret     = fSet.String("auth_secret", "", "Secret string that acts as a 'password' for communicating with the AI server")
+		aiServerScheme = fSet.String("ai_server_scheme", "", "The protocol to connect to the Codenames AI server")
+		aiServerAddr   = fSet.String("ai_server_addr", "", "The address to connect to the Codenames AI server")
 	)
+	if err := ff.Parse(fSet, args[1:], ff.WithEnvVars()); err != nil {
+		return fmt.Errorf("failed to parse flags: %w", err)
+	}
 
 	flag.Parse()
 
 	r := rand.New(cryptorand.NewSource())
 	db, err := sqldb.New(*dbPath, r)
 	if err != nil {
-		log.Fatalf("failed to initialize datastore: %v", err)
+		return fmt.Errorf("failed to initialize datastore: %w", err)
 	}
 
-	sc, err := loadKeys()
+	sc, err := loadKeys(*hashKeyPath, *blockKeyPath)
 	if err != nil {
-		log.Fatalf("failed to load cookie keys: %v", err)
+		return fmt.Errorf("failed to load cookie keys: %w", err)
 	}
 
 	ai := aiclient.New(*authSecret, *aiServerScheme, *aiServerAddr)
@@ -66,17 +85,19 @@ func main() {
 	})
 
 	if err := http.ListenAndServe(*addr, corsCfg.Handler(webSrv)); err != nil {
-		log.Fatal("ListenAndServe: ", err)
+		return fmt.Errorf("ListenAndServe: %w", err)
 	}
+
+	return nil
 }
 
-func loadKeys() (*securecookie.SecureCookie, error) {
-	hashKey, err := loadOrGenKey("hashKey")
+func loadKeys(hashKeyFileName, blockKeyFileName string) (*securecookie.SecureCookie, error) {
+	hashKey, err := loadOrGenKey(hashKeyFileName)
 	if err != nil {
 		return nil, err
 	}
 
-	blockKey, err := loadOrGenKey("blockKey")
+	blockKey, err := loadOrGenKey(blockKeyFileName)
 	if err != nil {
 		return nil, err
 	}
