@@ -10,12 +10,10 @@
 
 	onMount(async () => {
 		if (!gameStore.user) {
-            // Wait a tick for session restore
-            await new Promise(r => setTimeout(r, 100));
-            if (!gameStore.user) {
-			    goto('/');
-                return;
-            }
+      if (!gameStore.user) {
+		    goto('/');
+        return;
+      }
 		}
 		loadGames();
 	});

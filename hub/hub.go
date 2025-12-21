@@ -92,7 +92,7 @@ type broadcastMsg struct {
 }
 
 // ToGame sends a message to everyone in a game.
-func (h *Hub) ToGame(gID codenames.GameID, msg interface{}) error {
+func (h *Hub) ToGame(gID codenames.GameID, msg any) error {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(msg); err != nil {
 		return fmt.Errorf("failed to encode message: %w", err)
@@ -112,7 +112,7 @@ type playerMsg struct {
 	msg      []byte
 }
 
-func (h *Hub) ToPlayer(gID codenames.GameID, pID codenames.PlayerID, msg interface{}) error {
+func (h *Hub) ToPlayer(gID codenames.GameID, pID codenames.PlayerID, msg any) error {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(msg); err != nil {
 		return fmt.Errorf("failed to encode message: %w", err)

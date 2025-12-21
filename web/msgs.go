@@ -13,6 +13,18 @@ type Player struct {
 	Role     codenames.Role     `json:"role"`
 }
 
+type jsonRoleAssigned RoleAssigned
+type RoleAssigned struct {
+	Players []*Player `json:"players"`
+}
+
+func (ra *RoleAssigned) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		jsonRoleAssigned
+		Action string `json:"action"`
+	}{jsonRoleAssigned(*ra), "ROLE_ASSIGNED"})
+}
+
 type jsonGameStart GameStart
 type GameStart struct {
 	Game    *codenames.Game `json:"game"`

@@ -12,6 +12,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.6
 	github.com/namsral/flag v1.7.4-pre
 	github.com/olekukonko/tablewriter v0.0.5
+	github.com/rs/cors v1.11.1
 	golang.org/x/net v0.0.0-20210326220855-61e056675ecf
 	golang.org/x/text v0.32.0
 	google.golang.org/api v0.43.0

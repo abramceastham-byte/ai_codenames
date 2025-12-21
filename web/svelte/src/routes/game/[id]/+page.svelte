@@ -1,27 +1,26 @@
 <script lang="ts">
-	import { page } from '$app/stores';
 	import { gameStore } from '$lib/game.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import SetupView from '$lib/components/SetupView.svelte';
 	import BoardView from '$lib/components/BoardView.svelte';
     import { goto } from '$app/navigation';
 
-	const gameId = $derived($page.params.id ?? '');
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	onMount(async () => {
-        if (!gameId) {
+        if (!gameStore.user) {
+			    goto('/');
+	        return;
+        }
+
+        if (!data.gameId) {
              goto('/lobby');
              return;
         }
 
-        if (!gameStore.user) {
-             await new Promise(r => setTimeout(r, 100));
-            if (!gameStore.user) {
-						    goto('/');
-                return;
-            }
-        }
-		await gameStore.fetchGame(gameId);
+		await gameStore.fetchGame(data.gameId);
 	});
     
     onDestroy(() => {

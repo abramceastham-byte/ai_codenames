@@ -1,4 +1,4 @@
-import { type Game, type Player, type WsMessage, type PlayerID } from './types';
+import { type Game, type Player, type Team, type WsMessage } from './types';
 import { api } from './api';
 import { goto } from '$app/navigation';
 
@@ -13,13 +13,16 @@ export class GameStore {
 	// UI State
 	connected = $state(false);
 	error = $state<string | null>(null);
-    lastClue = $state<{word: string, count: number, team: string} | null>(null);
+	lastClue = $derived.by<{word: string, count: number, team: Team} | null>(() => {
+		const clues = this.game?.state.clues
+		if (!clues || clues.length === 0) {
+			return null
+		}
+		const clue = clues[clues.length-1]
+		return {word: clue.clue.word, count: clue.clue.count, team: clue.team}
+	})
 
 	ws: WebSocket | null = null;
-
-	constructor() {
-		this.restoreSession();
-	}
 
 	async restoreSession() {
 		try {
@@ -57,7 +60,7 @@ export class GameStore {
 
 		// Use current host but upgrade protocol
 		const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const url = `${proto}//${window.location.host}/api/game/${gameId}/ws`;
+		const url = `${proto}//localhost:8080/api/game/${gameId}/ws`;
 
 		this.ws = new WebSocket(url);
 		this.ws.onopen = () => {
@@ -78,12 +81,15 @@ export class GameStore {
 
 	handleMessage(msg: WsMessage) {
 		console.log('WS Msg:', msg);
-		if (msg.game) {
+		if ('game' in msg) {
 			this.game = msg.game;
 		}
 
 		switch (msg.action) {
 			case 'GAME_START':
+				if (msg.players) this.players = msg.players;
+				break;
+			case 'ROLE_ASSIGNED':
 				if (msg.players) this.players = msg.players;
 				break;
 			case 'CLUE_GIVEN':

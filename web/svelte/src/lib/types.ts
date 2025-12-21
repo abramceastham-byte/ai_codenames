@@ -36,8 +36,15 @@ export interface GameState {
 	active_team: Team;
 	active_role: Role;
 	board: Board;
+	clues: SpymasterClue[];
 	num_guesses_left: number;
 	starting_team: Team;
+	winning_team: Team | '';
+}
+
+export interface SpymasterClue {
+	clue: Clue
+	team: Team
 }
 
 export interface Game {
@@ -56,6 +63,11 @@ export interface Clue {
 export interface GameStartMsg {
 	action: 'GAME_START';
 	game: Game;
+	players: Player[];
+}
+
+export interface RoleAssignedMsg {
+	action: 'ROLE_ASSIGNED';
 	players: Player[];
 }
 
@@ -81,4 +93,4 @@ export interface GameEndMsg {
 	game: Game;
 }
 
-export type WsMessage = GameStartMsg | ClueGivenMsg | GuessGivenMsg | GameEndMsg;
+export type WsMessage = GameStartMsg | RoleAssignedMsg | ClueGivenMsg | GuessGivenMsg | GameEndMsg;

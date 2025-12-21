@@ -38,11 +38,15 @@ type Srv struct {
 // New returns an initialized server.
 func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aiclient.Client) *Srv {
 	s := &Srv{
-		sc:        sc,
-		hub:       hub.New(),
-		db:        db,
-		r:         r,
-		ws:        &websocket.Upgrader{}, // use default options, for now
+		sc:  sc,
+		hub: hub.New(),
+		db:  db,
+		r:   r,
+		ws: &websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return true
+			},
+		},
 		consensus: consensus.New(),
 		ai:        ai,
 	}
@@ -239,8 +243,14 @@ func (s *Srv) serveCreatePlayer(w http.ResponseWriter, r *http.Request, pt coden
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:  "Authorization",
-		Value: encoded,
+		Name:     "Authorization",
+		Value:    encoded,
+		Domain:   "localhost",
+		Path:     "/",
+		Secure:   false,
+		HttpOnly: true,
+		MaxAge:   60 * 60 * 24 * 365, // Cookie is good for a year.
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	return jsonResp(w, struct {
@@ -504,6 +514,14 @@ func (s *Srv) serveAssignRole(w http.ResponseWriter, r *http.Request, creator *c
 			WithMessage("failed to make players")
 	}
 
+	if err := s.broadcastMessage(game, prs, func(g *codenames.Game) any {
+		return &RoleAssigned{
+			Players: players,
+		}
+	}); err != nil {
+		log.Printf("failed to send message for role assigned: %v", err)
+	}
+
 	return jsonResp(w, players)
 }
 
@@ -713,7 +731,7 @@ func (s *Srv) broadcastMessage(game *codenames.Game, prs []*codenames.PlayerRole
 	game.State.Board = codenames.Revealed(game.State.Board)
 	operativeMsg := fn(game)
 	for _, pr := range prs {
-		if pr.Role != codenames.OperativeRole {
+		if pr.Role != codenames.OperativeRole && pr.Role != codenames.NoRole {
 			continue
 		}
 
@@ -804,8 +822,7 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 		return httperr.BadRequest("failed to decode guess request: %w", err)
 	}
 
-	card, ok := findCard(g.State.Board.Cards, req.Guess)
-	if !ok {
+	if _, ok := findCard(g.State.Board.Cards, req.Guess); !ok {
 		return httperr.
 			BadRequest("player %q guessed %q, which didn't correspond to a card in game %q", p.ID, req.Guess, g.ID).
 			WithMessage(fmt.Sprintf("guess %q didn't correspond to a card", req.Guess))
@@ -832,7 +849,7 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 		return nil
 	}
 
-	if card, ok = findCard(g.State.Board.Cards, guess); !ok {
+	if _, ok := findCard(g.State.Board.Cards, guess); !ok {
 		// This should probably never happen because if we have consensus, it
 		// should be *this* vote that caused it, but because HTTP requests are
 		// asynchronous, it could theoretically happen.
@@ -854,8 +871,11 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 			BadRequest("player %q/team %q in game %q gave invalid guess: %w", p.ID, userPR.Team, g.ID, err).
 			WithMessage(fmt.Sprintf("failed to make move: %v", err))
 	}
+	g.State = newState
+	g.Status = newStatus
 
-	if card, ok = findCard(newState.Board.Cards, guess); !ok {
+	card, ok := findCard(newState.Board.Cards, guess)
+	if !ok {
 		return httperr.
 			Internal("guess %q somehow no longer exists in the cards of game %q", guess, g.ID).
 			WithMessage(fmt.Sprintf("guess %q didn't correspond to a card", guess))
@@ -873,7 +893,7 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 
 	// Players can keep guessing if the game tells us its still their turn.
 	canKeepGuessing := newState.ActiveRole == codenames.OperativeRole && newStatus != codenames.Finished
-	if err := s.broadcastMessage(g, prs, func(g *codenames.Game) interface{} {
+	if err := s.broadcastMessage(g, prs, func(g *codenames.Game) any {
 		return &GuessGiven{
 			Guess:           guess,
 			Team:            userPR.Team,
@@ -888,7 +908,9 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 	}
 
 	if newStatus != codenames.Finished {
-		return nil
+		return jsonResp(w, struct {
+			Success bool `json:"success"`
+		}{true})
 	}
 
 	over, winningTeam := gfm.GameOver()
@@ -901,6 +923,7 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 	// The game is over, we should let folks know.
 	if err := s.hub.ToGame(g.ID, &GameEnd{
 		WinningTeam: winningTeam,
+		Game:        g,
 	}); err != nil {
 		return httperr.
 			Internal("failed to send game over for game %q: %w", g.ID, err).
@@ -936,7 +959,7 @@ func (s *Srv) serveData(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 	return nil
 }
 
-func jsonResp(w http.ResponseWriter, v interface{}) error {
+func jsonResp(w http.ResponseWriter, v any) error {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		return httperr.Internal("failed to encode response for %+v of type %T: %w", v, v, err)
@@ -1145,6 +1168,9 @@ func (s *Srv) gameIDFromRequest(r *http.Request) (codenames.GameID, error) {
 }
 
 func findCard(cards []codenames.Card, guess string) (*codenames.Card, bool) {
+	if guess == "" {
+		return nil, true
+	}
 	guess = strings.ToLower(guess)
 	for _, c := range cards {
 		if strings.ToLower(c.Codename) == guess {

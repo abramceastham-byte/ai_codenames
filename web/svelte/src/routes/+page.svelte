@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { gameStore } from '$lib/game.svelte';
+	import { onMount } from 'svelte';
 	
 	let name = $state('');
 
@@ -9,6 +11,13 @@
 			await gameStore.login(name);
 		}
 	}
+
+	onMount(async () => {
+    if (gameStore.user) {
+	    goto('/lobby');
+      return;
+    }
+	})
 </script>
 
 <div class="flex min-h-screen items-center justify-center bg-stone-100">

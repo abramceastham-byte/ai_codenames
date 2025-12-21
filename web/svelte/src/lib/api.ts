@@ -2,10 +2,11 @@ import type { Game, Player, GameState, Clue, Team, Role, PlayerID } from './type
 
 class Api {
 	async post<T>(url: string, body: any): Promise<T> {
-		const res = await fetch(url, {
+		const res = await fetch(`http://localhost:8080${url}`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(body)
+			body: JSON.stringify(body),
+			credentials: 'include',
 		});
 		if (!res.ok) {
 			const text = await res.text();
@@ -15,7 +16,7 @@ class Api {
 	}
 
 	async get<T>(url: string): Promise<T> {
-		const res = await fetch(url);
+		const res = await fetch(`http://localhost:8080${url}`, {credentials: 'include'});
 		if (!res.ok) throw new Error(res.statusText);
 		return res.json();
 	}

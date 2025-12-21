@@ -23,6 +23,9 @@
 	}
     
     const isGameOver = $derived(game?.status === 'FINISHED');
+
+  const redWon = $derived(game?.state.winning_team === 'RED')
+  const blueWon = $derived(game?.state.winning_team === 'BLUE')
 </script>
 
 <div class="mx-auto max-w-6xl p-4">
@@ -50,7 +53,7 @@
 	<div class="sticky bottom-4 mx-auto max-w-2xl">
         {#if isGameOver}
              <div class="rounded-lg bg-stone-800 p-6 text-center text-white shadow-xl">
-                <h2 class="mb-2 text-3xl font-bold">Game Over!</h2>
+                <h2 class="mb-2 text-3xl font-bold">Game over, <span class:text-red-600={redWon} class:text-blue-600={blueWon}> {game?.state.winning_team} wins!</span></h2>
                  <!-- We assume winning team is handled elsewhere or inferable, but for now simple message -->
                 <button onclick={() => goto('/lobby')} class="mt-4 rounded bg-white px-6 py-2 font-bold text-stone-900 hover:bg-gray-200">
                     Back to Lobby

@@ -14,6 +14,7 @@ import (
 	"github.com/bcspragu/Codenames/web"
 	"github.com/gorilla/securecookie"
 	"github.com/namsral/flag"
+	"github.com/rs/cors"
 
 	"math/rand"
 )
@@ -48,12 +49,23 @@ func main() {
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-c
-		db.Close()
+		if err := db.Close(); err != nil {
+			log.Printf("failed to close database: %v", err)
+		}
 		os.Exit(1)
 	}()
 
 	log.Printf("Server is running on %q", *addr)
-	if err := http.ListenAndServe(*addr, web.New(db, r, sc, ai)); err != nil {
+
+	webSrv := web.New(db, r, sc, ai)
+	corsCfg := cors.New(cors.Options{
+		AllowOriginFunc: func(origin string) bool {
+			return true
+		},
+		AllowCredentials: true,
+	})
+
+	if err := http.ListenAndServe(*addr, corsCfg.Handler(webSrv)); err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
 }

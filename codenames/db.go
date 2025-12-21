@@ -2,6 +2,7 @@ package codenames
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -185,18 +186,72 @@ func (g *Game) Clone() *Game {
 	}
 }
 
+type jsonGameState GameState
 type GameState struct {
-	ActiveTeam     Team   `json:"active_team"`
-	ActiveRole     Role   `json:"active_role"`
-	Board          *Board `json:"board"`
-	NumGuessesLeft int    `json:"num_guesses_left"`
-	StartingTeam   Team   `json:"starting_team"`
+	ActiveTeam     Team            `json:"active_team"`
+	ActiveRole     Role            `json:"active_role"`
+	Board          *Board          `json:"board"`
+	NumGuessesLeft int             `json:"num_guesses_left"`
+	StartingTeam   Team            `json:"starting_team"`
+	Clues          []SpymasterClue `json:"clues"`
+}
+
+func (gs *GameState) MarshalJSON() ([]byte, error) {
+	_, winningTeam := GameOver(gs)
+	return json.Marshal(struct {
+		jsonGameState
+		WinningTeam Team `json:"winning_team"`
+	}{jsonGameState(*gs), winningTeam})
+}
+
+func GameOver(gs *GameState) (bool, Team) {
+	got := make(map[Agent]int)
+	for i, cn := range gs.Board.Cards {
+		if gs.Board.Cards[i].Revealed {
+			got[cn.Agent]++
+		}
+	}
+	redWinTarget := 8
+	blueWinTarget := 8
+	switch gs.StartingTeam {
+	case BlueTeam:
+		blueWinTarget++
+	case RedTeam:
+		redWinTarget++
+	}
+
+	if redWinTarget == got[RedAgent] {
+		// If we've revealed all the red cards, the red team has won.
+		return true, RedTeam
+	}
+	if blueWinTarget == got[BlueAgent] {
+		// If we've revealed all the blue cards, the blue team has won.
+		return true, BlueTeam
+	}
+	if got[Assassin] > 0 {
+		// If we've revealed the assassin, the not-active team wins.
+		switch gs.ActiveTeam {
+		case BlueTeam:
+			return true, RedTeam
+		case RedTeam:
+			return true, BlueTeam
+		}
+	}
+
+	return false, NoTeam
+}
+
+type SpymasterClue struct {
+	Clue Clue `json:"clue"`
+	Team Team `json:"team"`
 }
 
 func (gs *GameState) Clone() *GameState {
 	if gs == nil {
 		return nil
 	}
+	clues := make([]SpymasterClue, len(gs.Clues))
+	copy(clues, gs.Clues)
 
 	return &GameState{
 		ActiveTeam:     gs.ActiveTeam,
@@ -204,6 +259,7 @@ func (gs *GameState) Clone() *GameState {
 		Board:          gs.Board.Clone(),
 		NumGuessesLeft: gs.NumGuessesLeft,
 		StartingTeam:   gs.StartingTeam,
+		Clues:          clues,
 	}
 }
 

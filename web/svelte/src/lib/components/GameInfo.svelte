@@ -8,8 +8,19 @@
         if (!game) return { red: 0, blue: 0 };
         const cards = game.state.board.cards;
         // Count unrevealed agents
-        const redLeft = cards.filter(c => c.agent === AGENT_RED && !c.revealed).length;
-        const blueLeft = cards.filter(c => c.agent === AGENT_BLUE && !c.revealed).length;
+        let redLeft = 8
+        let blueLeft = 8
+        switch (game.state.starting_team) {
+            case 'RED':
+                redLeft++
+                break
+            case 'BLUE':
+                blueLeft++
+                break
+        }
+        
+        redLeft -= cards.filter(c => c.agent === AGENT_RED && c.revealed).length;
+        blueLeft -= cards.filter(c => c.agent === AGENT_BLUE && c.revealed).length;
         return { red: redLeft, blue: blueLeft };
     });
     
@@ -33,7 +44,7 @@
         {#if lastClue && lastClue.team === game?.state.active_team}
              <div class="mt-2 border-t border-gray-300/50 pt-2">
                  <span class="text-sm text-gray-600">Current Clue:</span>
-                 <div class="font-mono text-lg font-bold">"{lastClue.word}" ({lastClue.count})</div>
+                 <div class="font-mono text-lg font-bold">{lastClue.word} ({lastClue.count})</div>
              </div>
         {/if}
     </div>

@@ -24,37 +24,8 @@
 
     async function endTurn() {
         if (!game) return;
-        // In Codenames, ending turn is basically guessing 0 cards or passing.
-        // The API might not have an explicit "end turn" endpoint?
-        // Checking API... no, it's driven by guesses.
-        // Usually clicking "End Turn" means stopping guessing.
-        // Wait, `serveGuess` takes `confirmed`. Maybe that's related?
-        // Actually, usually you switch turns by failing a guess or explicit pass.
-        // Codenames rules allow passing.
-        // Does the API support it?
-        // `codenames/game.go` `ActionPass`?
-        // I didn't see it in `web.go` handlers.
-        // Let's assume for now we just guess until failure or maybe there's a "pass" guess?
-        // I'll leave "End Turn" out for now if not supported, or implement later.
-        // Wait, looking at `web.go` `serveGuess`:
-        // It validates `req.Guess` corresponds to a card.
-        // So I can't guess "pass".
-        // Let me re-read `web.go`.
-        
-        // Actually, `game.Move` has `ActionPass`.
-        // But `serveGuess` calls `Move` with `ActionGuess`.
-        // There is no `servePass` handler in `web.go`.
-        // That seems like a missing feature in the backend?
-        // Or maybe I missed it.
-        // I'll check `web.go` handlers again.
+        await api.sendGuess(game.id, '') 
     }
-    
-    // Checked web.go: Handlers are:
-    // serveCreateUser, serveCreateAI, serveUpdateUser, serveUser, serveCreateGame, servePendingGames,
-    // serveGame, serveGamePlayers, serveRequestAI, serveJoinGame, serveAssignRole, serveStartGame,
-    // serveClue, serveGuess, serveData.
-    
-    // Yeah, no explicit pass. That's fine, we'll stick to Spymaster Clue for now.
 </script>
 
 <div class="rounded-lg bg-white p-4 shadow-md">
@@ -99,9 +70,8 @@
 		{:else}
 			<div class="flex items-center justify-between">
 				<div class="text-lg font-medium text-gray-800">It's your turn to guess!</div>
-                <!-- Pass button commented out until backend support confirmed -->
-				<!-- <button onclick={endTurn} class="text-red-600 hover:underline">End Turn</button> -->
-                <div class="text-sm text-gray-500">Tap a card to guess.</div>
+				<button onclick={endTurn} class="text-red-600 hover:underline">End Turn</button>
+        <div class="text-sm text-gray-500">Tap a card to guess.</div>
 			</div>
 		{/if}
 	{/if}

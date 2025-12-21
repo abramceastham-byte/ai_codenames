@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"errors"
 	"log"
 	"time"
 
@@ -41,17 +42,27 @@ type connection struct {
 func (c *connection) readPump() {
 	defer func() {
 		c.h.unregister <- c
-		c.ws.Close()
+		if err := c.ws.Close(); err != nil {
+			log.Printf("[read] error closing websocket: %v", err)
+		}
+
 	}()
 	c.ws.SetReadLimit(maxMessageSize)
-	c.ws.SetReadDeadline(time.Now().Add(pongWait))
+	if err := c.ws.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+		log.Printf("failed to set read deadline: %v", err)
+	}
 	c.ws.SetPongHandler(func(string) error {
-		c.ws.SetReadDeadline(time.Now().Add(pongWait))
+		if err := c.ws.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+			log.Printf("failed to set read deadline on pong: %v", err)
+		}
 		return nil
 	})
 	for {
 		_, _, err := c.ws.ReadMessage()
-		if err != nil {
+		if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) {
+			// Fine
+			break
+		} else if err != nil {
 			log.Printf("failed to read WebSocket message from client: %v", err)
 			break
 		}
@@ -60,7 +71,9 @@ func (c *connection) readPump() {
 
 // write writes a message with the given message type and payload.
 func (c *connection) write(mt int, payload []byte) error {
-	c.ws.SetWriteDeadline(time.Now().Add(writeWait))
+	if err := c.ws.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+		log.Printf("failed to set write deadline: %v", err)
+	}
 	return c.ws.WriteMessage(mt, payload)
 }
 
@@ -69,13 +82,17 @@ func (c *connection) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.ws.Close()
+		if err := c.ws.Close(); err != nil {
+			log.Printf("[write] error closing websocket: %v", err)
+		}
 	}()
 	for {
 		select {
 		case message, ok := <-c.send:
 			if !ok {
-				c.write(websocket.CloseMessage, []byte{})
+				if err := c.write(websocket.CloseMessage, []byte{}); err != nil && !errors.Is(err, websocket.ErrCloseSent) {
+					log.Printf("failed to write close message: %v", err)
+				}
 				return
 			}
 			if err := c.write(websocket.TextMessage, message); err != nil {

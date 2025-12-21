@@ -58,6 +58,7 @@ func New(b *codenames.Board, startingTeam codenames.Team, cfg *Config) (*Game, e
 			ActiveTeam:   startingTeam,
 			ActiveRole:   codenames.SpymasterRole,
 			Board:        b,
+			Clues:        []codenames.SpymasterClue{},
 		},
 		cfg: cfg,
 	}, nil
@@ -146,9 +147,10 @@ func (g *Game) Move(mv *Move) (*codenames.GameState, codenames.GameStatus, error
 		return nil, "", fmt.Errorf("unknown action %q", mv.Action)
 	}
 
-	state := codenames.Pending
-	if over, _ := g.GameOver(); over {
+	state := codenames.Playing
+	if over, winningTeam := g.GameOver(); over {
 		state = codenames.Finished
+		g.state.WinningTeam = winningTeam
 	}
 
 	return g.state, state, nil
@@ -160,6 +162,10 @@ func (g *Game) handleGiveClue(clue *codenames.Clue) {
 		numGuesses = -1
 	}
 
+	g.state.Clues = append(g.state.Clues, codenames.SpymasterClue{
+		Clue: *clue,
+		Team: g.state.ActiveTeam,
+	})
 	g.state.NumGuessesLeft = numGuesses
 	g.state.ActiveRole = codenames.OperativeRole
 }
@@ -219,14 +225,14 @@ func (g *Game) Play() (*Outcome, error) {
 		for g.state.ActiveRole == codenames.OperativeRole {
 			guess, err := op.Guess(codenames.Revealed(g.state.Board), clue)
 			if err != nil {
-				return nil, fmt.Errorf("Guess on %q: %v", g.state.ActiveTeam, err)
+				return nil, fmt.Errorf("guess on %q: %v", g.state.ActiveTeam, err)
 			}
 			if _, _, err = g.Move(&Move{
 				Action: ActionGuess,
 				Team:   g.state.ActiveTeam,
 				Guess:  guess,
 			}); err != nil {
-				return nil, fmt.Errorf("Guess on %q: %v", g.state.ActiveTeam, err)
+				return nil, fmt.Errorf("guess on %q: %v", g.state.ActiveTeam, err)
 			}
 		}
 	}
@@ -245,7 +251,7 @@ func (g *Game) activeAgent() codenames.Agent {
 
 func (g *Game) reveal(word string) (codenames.Card, error) {
 	for i, card := range g.state.Board.Cards {
-		if strings.ToLower(card.Codename) != strings.ToLower(word) {
+		if !strings.EqualFold(card.Codename, word) {
 			continue
 		}
 
@@ -273,33 +279,5 @@ func (g *Game) canKeepGuessing(card codenames.Card) bool {
 }
 
 func (g *Game) GameOver() (bool, codenames.Team) {
-	got := make(map[codenames.Agent]int)
-	for i, cn := range g.state.Board.Cards {
-		if g.state.Board.Cards[i].Revealed {
-			got[cn.Agent]++
-		}
-	}
-
-	for ag, wc := range want(g.state.StartingTeam) {
-		if gc := got[ag]; gc == wc {
-			switch ag {
-			case codenames.RedAgent:
-				// If we've revealed all the red cards, the red team has won.
-				return true, codenames.RedTeam
-			case codenames.BlueAgent:
-				// If we've revealed all the blue cards, the blue team has won.
-				return true, codenames.BlueTeam
-			case codenames.Assassin:
-				// If we've revealed the assassin, the not-active team wins.
-				switch g.state.ActiveTeam {
-				case codenames.BlueTeam:
-					return true, codenames.RedTeam
-				case codenames.RedTeam:
-					return true, codenames.BlueTeam
-				}
-			}
-		}
-	}
-
-	return false, codenames.NoTeam
+	return codenames.GameOver(g.state)
 }
