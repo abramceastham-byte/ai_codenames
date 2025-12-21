@@ -6,6 +6,7 @@
 	import GameInfo from './GameInfo.svelte';
 	import type { Card } from '$lib/types';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 
 	const { game, myPlayer, isMyTurn } = $derived(gameStore);
 
@@ -30,7 +31,10 @@
 
 <div class="mx-auto max-w-6xl p-4">
 	<div class="mb-4 flex items-center justify-between">
-		<button onclick={() => goto('/lobby')} class="font-medium text-gray-500 hover:text-gray-800">
+		<button
+			onclick={() => goto(resolve('/lobby'))}
+			class="font-medium text-gray-500 hover:text-gray-800"
+		>
 			&larr; Lobby
 		</button>
 		<div class="text-sm text-gray-400">Game ID: {game?.id}</div>
@@ -40,7 +44,7 @@
 
 	<div class="mb-8 grid grid-cols-5 gap-2 md:gap-4">
 		{#if game?.state.board.cards}
-			{#each game.state.board.cards as card}
+			{#each game.state.board.cards as card (card.codeword)}
 				<CardComponent {card} {isSpymaster} onClick={() => handleCardClick(card)} />
 			{/each}
 		{/if}
@@ -56,7 +60,7 @@
 				</h2>
 				<!-- We assume winning team is handled elsewhere or inferable, but for now simple message -->
 				<button
-					onclick={() => goto('/lobby')}
+					onclick={() => goto(resolve('/lobby'))}
 					class="mt-4 rounded bg-white px-6 py-2 font-bold text-stone-900 hover:bg-gray-200"
 				>
 					Back to Lobby

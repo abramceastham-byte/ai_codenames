@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { gameStore } from '$lib/game.svelte';
 	import { onMount } from 'svelte';
 
@@ -14,7 +15,7 @@
 
 	onMount(async () => {
 		if (gameStore.user) {
-			goto('/lobby');
+			goto(resolve('/lobby'));
 			return;
 		}
 	});

@@ -80,7 +80,7 @@
 					</button>
 				</div>
 				<div class="min-h-[60px] rounded bg-white p-4 shadow-sm">
-					{#each getPlayers('RED', 'SPYMASTER') as p}
+					{#each getPlayers('RED', 'SPYMASTER') as p (p.player_id.id)}
 						<div class="flex items-center gap-2">
 							<div class="h-2 w-2 rounded-full bg-red-500"></div>
 							{p.name}
@@ -100,7 +100,7 @@
 					</button>
 				</div>
 				<div class="min-h-[100px] rounded bg-white p-4 shadow-sm">
-					{#each getPlayers('RED', 'OPERATIVE') as p}
+					{#each getPlayers('RED', 'OPERATIVE') as p (p.player_id.id)}
 						<div class="flex items-center gap-2">
 							<div class="h-2 w-2 rounded-full bg-red-500"></div>
 							{p.name}
@@ -125,7 +125,7 @@
 					</button>
 				</div>
 				<div class="min-h-[60px] rounded bg-white p-4 shadow-sm">
-					{#each getPlayers('BLUE', 'SPYMASTER') as p}
+					{#each getPlayers('BLUE', 'SPYMASTER') as p (p.player_id.id)}
 						<div class="flex items-center gap-2">
 							<div class="h-2 w-2 rounded-full bg-blue-500"></div>
 							{p.name}
@@ -145,7 +145,7 @@
 					</button>
 				</div>
 				<div class="min-h-[100px] rounded bg-white p-4 shadow-sm">
-					{#each getPlayers('BLUE', 'OPERATIVE') as p}
+					{#each getPlayers('BLUE', 'OPERATIVE') as p (p.player_id.id)}
 						<div class="flex items-center gap-2">
 							<div class="h-2 w-2 rounded-full bg-blue-500"></div>
 							{p.name}

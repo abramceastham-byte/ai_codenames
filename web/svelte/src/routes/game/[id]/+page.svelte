@@ -4,6 +4,7 @@
 	import SetupView from '$lib/components/SetupView.svelte';
 	import BoardView from '$lib/components/BoardView.svelte';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 
 	import type { PageProps } from './$types';
 
@@ -11,12 +12,12 @@
 
 	onMount(async () => {
 		if (!gameStore.user) {
-			goto('/');
+			goto(resolve('/'));
 			return;
 		}
 
 		if (!data.gameId) {
-			goto('/lobby');
+			goto(resolve('/lobby'));
 			return;
 		}
 
@@ -35,7 +36,9 @@
 		<div class="p-8 text-center text-red-600">
 			<h2 class="text-2xl font-bold">Error</h2>
 			<p>{gameStore.error}</p>
-			<a href="/lobby" class="mt-4 inline-block text-blue-600 hover:underline">Back to Lobby</a>
+			<a href={resolve('/lobby')} class="mt-4 inline-block text-blue-600 hover:underline"
+				>Back to Lobby</a
+			>
 		</div>
 	{:else if !gameStore.game}
 		<div class="flex h-screen items-center justify-center">

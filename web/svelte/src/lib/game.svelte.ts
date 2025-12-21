@@ -1,6 +1,7 @@
 import { type Game, type Player, type Team, type WsMessage } from './types';
 import { api } from './api';
 import { goto } from '$app/navigation';
+import { resolve } from '$app/paths';
 
 export class GameStore {
 	// User State
@@ -39,7 +40,7 @@ export class GameStore {
 		const res = await api.createUser(name);
 		if (res.success) {
 			this.user = { id: res.user_id, name };
-			await goto('/lobby');
+			await goto(resolve('/lobby'));
 		}
 	}
 

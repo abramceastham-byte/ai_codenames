@@ -3,6 +3,7 @@
 	import { gameStore } from '$lib/game.svelte';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
+	import { resolve } from '$app/paths';
 
 	let pendingGames = $state<string[]>([]);
 	let joinId = $state('');
@@ -11,7 +12,7 @@
 	onMount(async () => {
 		if (!gameStore.user) {
 			if (!gameStore.user) {
-				goto('/');
+				goto(resolve('/'));
 				return;
 			}
 		}
@@ -30,7 +31,7 @@
 		loading = true;
 		try {
 			const res = await api.createGame();
-			await goto(`/game/${res.id}`);
+			await goto(resolve(`/game/${res.id}`));
 		} catch (e) {
 			alert('Failed to create game: ' + e);
 		} finally {
@@ -43,7 +44,7 @@
 		loading = true;
 		try {
 			await api.joinGame(id);
-			await goto(`/game/${id}`);
+			await goto(resolve(`/game/${id}`));
 		} catch (e) {
 			alert('Failed to join game: ' + e);
 		} finally {
@@ -85,7 +86,7 @@
 					<div class="mt-6">
 						<h3 class="mb-2 text-sm font-medium text-gray-500">Pending Games</h3>
 						<ul class="space-y-2">
-							{#each pendingGames as gameId}
+							{#each pendingGames as gameId (gameId)}
 								<li>
 									<button
 										onclick={() => joinGame(gameId)}

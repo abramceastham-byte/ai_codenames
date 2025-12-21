@@ -1,12 +1,6 @@
 <script lang="ts">
 	import type { Card } from '$lib/types';
-	import {
-		AGENT_RED,
-		AGENT_BLUE,
-		AGENT_ASSASSIN,
-		AGENT_BYSTANDER,
-		AGENT_UNKNOWN
-	} from '$lib/types';
+	import { AGENT_RED, AGENT_BLUE, AGENT_ASSASSIN, AGENT_BYSTANDER } from '$lib/types';
 
 	let { card, isSpymaster, onClick } = $props<{
 		card: Card;

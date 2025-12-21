@@ -1,4 +1,4 @@
-import type { Game, Player, GameState, Clue, Team, Role, PlayerID } from './types';
+import type { Game, Player, Team, Role, PlayerID } from './types';
 
 class Api {
 	async post<T>(url: string, body: any): Promise<T> {
