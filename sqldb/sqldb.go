@@ -3,18 +3,21 @@ package sqldb
 import (
 	"bytes"
 	"database/sql"
+	_ "embed"
 	"encoding/gob"
 	"errors"
 	"fmt"
 	"log"
 	"math/rand"
-	"os"
 	"strings"
 
 	"github.com/bcspragu/Codenames/codenames"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
+
+//go:embed schema.sql
+var schemaSQL string
 
 var (
 	// Game statements
@@ -77,11 +80,10 @@ type DB struct {
 }
 
 // New creates a new *DB that is stored on disk at the given filename.
+// If the database doesn't exist or hasn't been initialized, the schema
+// will be automatically applied.
 func New(fn string, r *rand.Rand) (*DB, error) {
-	if _, err := os.Stat(fn); os.IsNotExist(err) {
-		return nil, errors.New("DB needs to be initialized")
-	}
-	sdb, err := sql.Open("sqlite3", fn+"?_loc=UTC")
+	sdb, err := sql.Open("sqlite", fn)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +108,21 @@ func New(fn string, r *rand.Rand) (*DB, error) {
 		}
 	}
 	sdb.SetMaxOpenConns(1)
+
+	// Check if the schema has been applied by checking if the Users table exists
+	var tableName string
+	err = sdb.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='Users'").Scan(&tableName)
+	if err == sql.ErrNoRows {
+		// Schema hasn't been applied, apply it now
+		if _, err := sdb.Exec(schemaSQL); err != nil {
+			sdb.Close()
+			return nil, fmt.Errorf("failed to apply schema: %w", err)
+		}
+		log.Println("Database schema initialized successfully")
+	} else if err != nil {
+		sdb.Close()
+		return nil, fmt.Errorf("failed to check for existing schema: %w", err)
+	}
 
 	db := &DB{
 		sdb:      sdb,
