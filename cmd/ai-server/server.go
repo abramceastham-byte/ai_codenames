@@ -15,8 +15,13 @@ import (
 	"github.com/bcspragu/Codenames/codenames"
 	"github.com/bcspragu/Codenames/httperr"
 	"github.com/bcspragu/Codenames/msgs"
-	"github.com/bcspragu/Codenames/w2v"
 )
+
+// AI is the interface that AI backends must implement.
+type AI interface {
+	codenames.Spymaster
+	codenames.Operative
+}
 
 const (
 	maxConcurrentGames = 25
@@ -27,7 +32,7 @@ type activePlayer struct {
 }
 
 type Server struct {
-	ai                *w2v.AI
+	ai                AI
 	authSecret        string
 	webServerEndpoint string
 	r                 *rand.Rand
@@ -38,7 +43,7 @@ type Server struct {
 	activePlayers map[codenames.RobotID]*activePlayer
 }
 
-func newServer(ai *w2v.AI, authSecret, webServerEndpoint string, r *rand.Rand) *Server {
+func newServer(ai AI, authSecret, webServerEndpoint string, r *rand.Rand) *Server {
 	srv := &Server{
 		ai:                ai,
 		authSecret:        authSecret,
