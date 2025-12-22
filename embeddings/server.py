@@ -169,10 +169,11 @@ async def suggest_clues(req: SuggestCluesRequest):
     avoid_embeddings = model.encode(req.avoid) if req.avoid else None
 
     # Compute similarities: vocab_embeddings (V x D) @ target_embeddings.T (D x T) = (V x T)
-    target_sims = model.similarity(vocab_embeddings, target_embeddings)  # (V x T)
+    # model.similarity returns a torch tensor, convert to numpy
+    target_sims = model.similarity(vocab_embeddings, target_embeddings).cpu().numpy()  # (V x T)
 
     if avoid_embeddings is not None:
-        avoid_sims = model.similarity(vocab_embeddings, avoid_embeddings)  # (V x A)
+        avoid_sims = model.similarity(vocab_embeddings, avoid_embeddings).cpu().numpy()  # (V x A)
         max_avoid_sim = np.max(avoid_sims, axis=1)  # (V,)
     else:
         max_avoid_sim = np.zeros(len(vocab_words))
