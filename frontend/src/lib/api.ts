@@ -2,10 +2,10 @@ import type { Game, Player, Team, Role, PlayerID } from './types';
 import { PUBLIC_API_URL } from '$env/static/public';
 
 export class Api {
-	fetch: typeof window.fetch
+	fetch: typeof window.fetch;
 
 	constructor(fetch?: typeof window.fetch) {
-		this.fetch = fetch ?? window.fetch
+		this.fetch = fetch ?? window.fetch;
 	}
 
 	async post<T>(url: string, body: any): Promise<T> {
@@ -37,7 +37,7 @@ export class Api {
 	}
 
 	async createGame(privateGame: boolean): Promise<{ id: string }> {
-		return this.post('/api/game', {private: privateGame});
+		return this.post('/api/game', { private: privateGame });
 	}
 
 	async getPendingGames(): Promise<string[]> {
@@ -81,7 +81,11 @@ export class Api {
 		return this.post(`/api/game/${gameId}/clue`, { word, count });
 	}
 
-	async sendGuess(gameId: string, guess: string, confirmed: boolean = true): Promise<{ success: boolean }> {
+	async sendGuess(
+		gameId: string,
+		guess: string,
+		confirmed: boolean = true
+	): Promise<{ success: boolean }> {
 		return this.post(`/api/game/${gameId}/guess`, { guess, confirmed });
 	}
 }

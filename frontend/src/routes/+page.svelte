@@ -95,8 +95,8 @@
 				<p class="mb-4 text-gray-600">Start a new match</p>
 				<div class="my-2">
 					<input name="private" type="checkbox" bind:checked={privateGame} />
-			    <label for="private">Private?</label>
-		    </div>
+					<label for="private">Private?</label>
+				</div>
 				<button
 					onclick={createGame}
 					disabled={loading}

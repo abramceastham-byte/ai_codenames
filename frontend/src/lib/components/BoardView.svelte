@@ -40,14 +40,14 @@
 	const redWon = $derived(game?.state.winning_team === 'RED');
 	const blueWon = $derived(game?.state.winning_team === 'BLUE');
 	const perCardVotes = $derived.by(() => {
-		const perCardV = new Map<string, PlayerVote[]>()
+		const perCardV = new Map<string, PlayerVote[]>();
 		gameStore.votes.forEach((pv) => {
-			const votes = perCardV.get(pv.guess) ?? []
-			votes.push(pv)
-			perCardV.set(pv.guess, votes)
-		})
-		return perCardV
-	})
+			const votes = perCardV.get(pv.guess) ?? [];
+			votes.push(pv);
+			perCardV.set(pv.guess, votes);
+		});
+		return perCardV;
+	});
 </script>
 
 <div class="mx-auto max-w-6xl p-4">

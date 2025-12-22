@@ -4,8 +4,8 @@ import { gameStore } from '$lib/game.svelte';
 import { redirect } from '@sveltejs/kit';
 
 export const load: PageLoad = async ({ parent }) => {
-	await parent()
-	const redirectLoc = new URLSearchParams(window.location.search).get('redirect')
+	await parent();
+	const redirectLoc = new URLSearchParams(window.location.search).get('redirect');
 	if (gameStore.user) {
 		if (redirectLoc && redirectLoc.startsWith('/')) {
 			redirect(303, redirectLoc);
@@ -14,7 +14,6 @@ export const load: PageLoad = async ({ parent }) => {
 		}
 	}
 	return {
-		hasRedirectToGame: redirectLoc?.startsWith('/game/') ?? false,
-	}
+		hasRedirectToGame: redirectLoc?.startsWith('/game/') ?? false
+	};
 };
-

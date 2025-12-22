@@ -30,15 +30,15 @@
 	}
 
 	const votesToEnd = $derived.by(() => {
-		const vte: PlayerVote[] = []
+		const vte: PlayerVote[] = [];
 		gameStore.votes.forEach((pv) => {
 			if (pv.guess !== '') {
-				return
+				return;
 			}
-			vte.push(pv)
-		})
-		return vte
-	})
+			vte.push(pv);
+		});
+		return vte;
+	});
 </script>
 
 <div class="rounded-lg bg-white p-4 shadow-md">
@@ -49,7 +49,7 @@
 		</div>
 	{:else if myPlayer?.role === 'SPYMASTER'}
 		<form
-			class="flex sm:items-end gap-4 flex-col sm:flex-row"
+			class="flex flex-col gap-4 sm:flex-row sm:items-end"
 			onsubmit={(e) => {
 				e.preventDefault();
 				submitClue();
@@ -89,20 +89,23 @@
 		</form>
 	{:else}
 		<div class="flex items-center justify-between">
-			<div class="text-lg font-medium text-gray-800">You have {game?.state.num_guesses_left} {#if game?.state.num_guesses_left === 1}guess{:else}guesses{/if} remaining</div>
+			<div class="text-lg font-medium text-gray-800">
+				You have {game?.state.num_guesses_left}
+				{#if game?.state.num_guesses_left === 1}guess{:else}guesses{/if} remaining
+			</div>
 			<div class="flex items-center">
 				<button onclick={endTurn} class="text-red-600 hover:underline">End Turn</button>
 				{#if votesToEnd.length > 0}
-					<div class="flex justify-center gap-1 ml-2">
+					<div class="ml-2 flex justify-center gap-1">
 						{#each votesToEnd as vote (vote.playerId.id)}
 							<div class="group relative">
 								<div
-									class="w-2 h-2 rounded-full transition-all duration-200 {vote.confirmed
+									class="h-2 w-2 rounded-full transition-all duration-200 {vote.confirmed
 										? 'bg-yellow-500'
-										: 'bg-transparent border border-yellow-500'}"
+										: 'border border-yellow-500 bg-transparent'}"
 								></div>
 								<div
-									class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
+									class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 rounded bg-gray-900 px-2 py-1 text-xs whitespace-nowrap text-white opacity-0 transition-opacity group-hover:opacity-100"
 								>
 									{vote.playerName} votes to end the turn
 								</div>

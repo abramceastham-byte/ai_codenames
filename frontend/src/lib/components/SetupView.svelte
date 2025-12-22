@@ -13,7 +13,7 @@
 	async function joinRole(team: Team, role: Role) {
 		if (!game || !user || !gameStore.user) return;
 		const newPlayers = await api.assignRole(game.id, team, role);
-		gameStore.players = newPlayers
+		gameStore.players = newPlayers;
 	}
 
 	async function addAI(team: Team, role: Role) {
@@ -40,12 +40,12 @@
 		return rS === 1 && bS === 1 && rO > 0 && bO > 0;
 	});
 
-	const unassigned = $derived.by(() => getPlayers('', ''))
+	const unassigned = $derived.by(() => getPlayers('', ''));
 
 	const isCreator = $derived(game && gameStore.user && game.created_by === gameStore.user.id);
 	const creatorName = $derived.by(() => {
-		return players.find((p) => game?.created_by === p.player_id.id)?.name ?? 'game creator'
-	})
+		return players.find((p) => game?.created_by === p.player_id.id)?.name ?? 'game creator';
+	});
 </script>
 
 <div class="mx-auto max-w-6xl p-4">
@@ -73,30 +73,30 @@
 	{#snippet joinButton(team: Team, role: Role, classes: string)}
 		<button
 			onclick={() => joinRole(team, role)}
-			class="{classes} rounded-sm px-2 py-1 text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+			class="{classes} rounded-sm px-2 py-1 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50"
 			disabled={getPlayers(team, role).length > (role === 'OPERATIVE' ? 9 : 0)}
 		>
 			Join
-	</button>
+		</button>
 	{/snippet}
 
 	{#snippet aiButton(team: Team, role: Role, classes: string)}
 		{#if isCreator}
-		<button
-			onclick={() => addAI(team, role)}
-			class="{classes} rounded-sm px-2 py-1 text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-			disabled={getPlayers(team, role).length > (role === 'OPERATIVE' ? 9 : 0)}
-		>
-			Add AI
-		</button>
+			<button
+				onclick={() => addAI(team, role)}
+				class="{classes} rounded-sm px-2 py-1 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50"
+				disabled={getPlayers(team, role).length > (role === 'OPERATIVE' ? 9 : 0)}
+			>
+				Add AI
+			</button>
 		{/if}
 	{/snippet}
 
 	{#snippet joinButtons(team: Team, role: Role, classes: string)}
-			<div class="flex gap-2">
-				{@render aiButton(team, role, classes)}
-				{@render joinButton(team, role, classes)}
-			</div>
+		<div class="flex gap-2">
+			{@render aiButton(team, role, classes)}
+			{@render joinButton(team, role, classes)}
+		</div>
 	{/snippet}
 
 	<div class="grid grid-cols-2 gap-8">
@@ -174,18 +174,16 @@
 	<div class="mt-8 text-center text-gray-500">
 		{#if unassigned.length > 0}
 			{#if unassigned.length === 1}
-			<p>Waiting for role to be assigned to {unassigned[0].name}</p>
+				<p>Waiting for role to be assigned to {unassigned[0].name}</p>
 			{:else}
 				<p>Waiting for roles to be assigned to {unassigned.map((p) => p.name).join(', ')}</p>
 			{/if}
+		{:else if canStart}
+			<p>Waiting for {creatorName} to start the game...</p>
+		{:else if players.length < 4}
+			<p>Waiting for more players...</p>
 		{:else}
-			{#if canStart}
-				<p>Waiting for {creatorName} to start the game...</p>
-			{:else if players.length < 4}
-				<p>Waiting for more players...</p>
-			{:else}
-				<p>Waiting for all roles to be filled...</p>
-			{/if}
+			<p>Waiting for all roles to be filled...</p>
 		{/if}
 	</div>
 </div>

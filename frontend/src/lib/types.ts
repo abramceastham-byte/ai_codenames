@@ -107,4 +107,10 @@ export interface PlayerVote {
 	guess: string;
 }
 
-export type WsMessage = GameStartMsg | RoleAssignedMsg | ClueGivenMsg | GuessGivenMsg | GameEndMsg | PlayerVoteMsg;
+export type WsMessage =
+	| GameStartMsg
+	| RoleAssignedMsg
+	| ClueGivenMsg
+	| GuessGivenMsg
+	| GameEndMsg
+	| PlayerVoteMsg;

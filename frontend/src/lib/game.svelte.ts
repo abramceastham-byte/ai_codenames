@@ -1,13 +1,19 @@
-import { type Game, type Player, type Team, type WsMessage, type PlayerVote, type PlayerID } from './types';
+import {
+	type Game,
+	type Player,
+	type Team,
+	type WsMessage,
+	type PlayerVote,
+	type PlayerID
+} from './types';
 import { Api } from '$lib/api';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { PUBLIC_API_URL } from '$env/static/public';
 import { SvelteMap } from 'svelte/reactivity';
 
-
 export class GameStore {
-	api = new Api()
+	api = new Api();
 
 	// User State
 	user = $state<{ id: string; name: string } | null>(null);
@@ -48,7 +54,7 @@ export class GameStore {
 		const res = await this.api.createUser(name);
 		if (res.success) {
 			this.user = { id: res.user_id, name };
-			const redirect = new URLSearchParams(window.location.search).get('redirect')
+			const redirect = new URLSearchParams(window.location.search).get('redirect');
 			if (redirect && redirect.startsWith('/')) {
 				await goto(redirect);
 			} else {
@@ -72,8 +78,8 @@ export class GameStore {
 			this.ws.close();
 		}
 
-		const apiUrl = URL.parse(PUBLIC_API_URL)
-		const host = apiUrl?.host ?? window.location.host
+		const apiUrl = URL.parse(PUBLIC_API_URL);
+		const host = apiUrl?.host ?? window.location.host;
 		const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 		const url = `${proto}//${host}/api/game/${gameId}/ws`;
 
@@ -128,22 +134,20 @@ export class GameStore {
 	}
 
 	handlePlayerVote(msg: { player_id: PlayerID; guess: string; confirmed: boolean }) {
-		const player = this.players.find( (p) => p.player_id.id === msg.player_id.id );
+		const player = this.players.find((p) => p.player_id.id === msg.player_id.id);
 		if (!player) return;
 
 		this.votes.set(player.player_id.id, {
 			playerId: msg.player_id,
 			playerName: player.name,
 			confirmed: msg.confirmed,
-			guess: msg.guess,
+			guess: msg.guess
 		});
 	}
 
 	get myPlayer(): Player | undefined {
 		if (!this.user || !this.players) return undefined;
-		return this.players.find(
-			(p) => p.player_id.id === this.user?.id
-		);
+		return this.players.find((p) => p.player_id.id === this.user?.id);
 	}
 
 	get isMyTurn(): boolean {
