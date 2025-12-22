@@ -27,11 +27,72 @@ func New(endpoint string) *AI {
 	}
 }
 
-// GiveClue implements codenames.Spymaster. Currently returns a placeholder
-// since clue generation via embeddings is complex and not yet implemented.
+// GiveClue implements codenames.Spymaster. It finds a clue word that is
+// semantically similar to our team's words and dissimilar to opponent/neutral/assassin words.
 func (ai *AI) GiveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Clue, error) {
-	// Placeholder: clue generation is complex and left for future work
-	return &codenames.Clue{Word: "placeholder", Count: 1}, nil
+	// Get our team's unrevealed target words
+	targets := codenames.Unrevealed(codenames.Targets(b.Cards, agent))
+	if len(targets) == 0 {
+		return &codenames.Clue{Word: "done", Count: 0}, nil
+	}
+
+	// Get words to avoid: opponent, bystanders, assassin
+	var avoid []codenames.Card
+	for _, a := range []codenames.Agent{codenames.Bystander, codenames.Assassin} {
+		avoid = append(avoid, codenames.Unrevealed(codenames.Targets(b.Cards, a))...)
+	}
+	// Add opponent's cards
+	opponent := opponentAgent(agent)
+	if opponent != codenames.UnknownAgent {
+		avoid = append(avoid, codenames.Unrevealed(codenames.Targets(b.Cards, opponent))...)
+	}
+
+	// Extract words from cards
+	targetWords := cardWords(targets)
+	avoidWords := cardWords(avoid)
+	boardWords := allBoardWords(b)
+
+	// Call the embedding service
+	suggestions, err := ai.suggestClues(targetWords, avoidWords, boardWords, 1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get clue suggestions: %w", err)
+	}
+
+	if len(suggestions) == 0 {
+		// Fallback if no suggestions
+		return &codenames.Clue{Word: "guess", Count: 1}, nil
+	}
+
+	// Return the best suggestion with count=1
+	// Future: could analyze target_scores to determine optimal count
+	return &codenames.Clue{Word: suggestions[0].Clue, Count: 1}, nil
+}
+
+func opponentAgent(agent codenames.Agent) codenames.Agent {
+	switch agent {
+	case codenames.RedAgent:
+		return codenames.BlueAgent
+	case codenames.BlueAgent:
+		return codenames.RedAgent
+	default:
+		return codenames.UnknownAgent
+	}
+}
+
+func cardWords(cards []codenames.Card) []string {
+	words := make([]string, len(cards))
+	for i, c := range cards {
+		words[i] = c.Codename
+	}
+	return words
+}
+
+func allBoardWords(b *codenames.Board) []string {
+	words := make([]string, len(b.Cards))
+	for i, c := range b.Cards {
+		words[i] = c.Codename
+	}
+	return words
 }
 
 // Guess implements codenames.Operative. It computes similarity between the clue
@@ -140,4 +201,56 @@ func (ai *AI) similarity(clue string, candidates []string) ([]wordScore, error) 
 	}
 
 	return result.Scores, nil
+}
+
+type suggestCluesRequest struct {
+	Targets        []string `json:"targets"`
+	Avoid          []string `json:"avoid"`
+	BoardWords     []string `json:"board_words"`
+	MaxSuggestions int      `json:"max_suggestions"`
+}
+
+type clueSuggestion struct {
+	Clue         string    `json:"clue"`
+	Score        float32   `json:"score"`
+	TargetScores []float32 `json:"target_scores"`
+}
+
+type suggestCluesResponse struct {
+	Suggestions []clueSuggestion `json:"suggestions"`
+}
+
+func (ai *AI) suggestClues(targets, avoid, boardWords []string, maxSuggestions int) ([]clueSuggestion, error) {
+	req := suggestCluesRequest{
+		Targets:        targets,
+		Avoid:          avoid,
+		BoardWords:     boardWords,
+		MaxSuggestions: maxSuggestions,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	resp, err := ai.client.Post(
+		ai.endpoint+"/suggest-clues",
+		"application/json",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call embedding service: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("embedding service returned status %d", resp.StatusCode)
+	}
+
+	var result suggestCluesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Suggestions, nil
 }

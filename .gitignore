@@ -10,5 +10,6 @@ config
 data/**
 data/*.bin
 data/words.txt
+data/common_words.txt
 hashKey
 node_modules
