@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/cookiejar"
 
@@ -119,12 +118,11 @@ func (c *Client) RequestAI(gID codenames.GameID) (codenames.RobotID, error) {
 	return codenames.RobotID(resp.RobotID), nil
 }
 
-func (c *Client) AssignRole(gID codenames.GameID, pID codenames.PlayerID, team codenames.Team, role codenames.Role) error {
+func (c *Client) AssignRole(gID codenames.GameID, team codenames.Team, role codenames.Role) error {
 	body := struct {
-		PlayerID codenames.PlayerID `json:"player_id"`
-		Team     string             `json:"team"`
-		Role     string             `json:"role"`
-	}{pID, string(team), string(role)}
+		Team string `json:"team"`
+		Role string `json:"role"`
+	}{string(team), string(role)}
 
 	req, err := http.NewRequest(http.MethodPost, c.scheme+"://"+c.addr+"/api/game/"+string(gID)+"/assignRole", toBody(body))
 	if err != nil {
@@ -191,7 +189,7 @@ func (c *Client) GiveGuess(gID codenames.GameID, guess string, confirmed bool) e
 	return nil
 }
 
-func (c *Client) do(req *http.Request, resp interface{}) error {
+func (c *Client) do(req *http.Request, resp any) error {
 	httpResp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to make request: %w", err)
@@ -224,7 +222,7 @@ func (h *httpError) Error() string {
 }
 
 func handleError(resp *http.Response) error {
-	dat, err := ioutil.ReadAll(resp.Body)
+	dat, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return &httpError{
 			statusCode: resp.StatusCode,

@@ -16,6 +16,11 @@
 		gameStore.players = newPlayers
 	}
 
+	async function addAI(team: Team, role: Role) {
+		if (!game || !user || !gameStore.user) return;
+		await api.requestAI(game.id, team, role);
+	}
+
 	async function startGame() {
 		if (!game) return;
 		await api.startGame(game.id);
@@ -71,8 +76,27 @@
 			class="{classes} rounded-sm px-2 py-1 text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
 			disabled={getPlayers(team, role).length > (role === 'OPERATIVE' ? 9 : 0)}
 		>
-			JOIN
+			Join
 	</button>
+	{/snippet}
+
+	{#snippet aiButton(team: Team, role: Role, classes: string)}
+		{#if isCreator}
+		<button
+			onclick={() => addAI(team, role)}
+			class="{classes} rounded-sm px-2 py-1 text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+			disabled={getPlayers(team, role).length > (role === 'OPERATIVE' ? 9 : 0)}
+		>
+			Add AI
+		</button>
+		{/if}
+	{/snippet}
+
+	{#snippet joinButtons(team: Team, role: Role, classes: string)}
+			<div class="flex gap-2">
+				{@render aiButton(team, role, classes)}
+				{@render joinButton(team, role, classes)}
+			</div>
 	{/snippet}
 
 	<div class="grid grid-cols-2 gap-8">
@@ -83,7 +107,7 @@
 			<div class="mb-6">
 				<div class="mb-2 flex items-center justify-between">
 					<h3 class="font-semibold text-red-900">Spymaster</h3>
-					{@render joinButton('RED', 'SPYMASTER', 'bg-red-200 text-red-800 hover:bg-red-300')}
+					{@render joinButtons('RED', 'SPYMASTER', 'bg-red-200 text-red-800 hover:bg-red-300')}
 				</div>
 				<div class="min-h-[60px] rounded bg-white p-4 shadow-sm">
 					{#each getPlayers('RED', 'SPYMASTER') as p (p.player_id.id)}
@@ -98,7 +122,7 @@
 			<div>
 				<div class="mb-2 flex items-center justify-between">
 					<h3 class="font-semibold text-red-900">Operatives</h3>
-					{@render joinButton('RED', 'OPERATIVE', 'bg-red-200 text-red-800 hover:bg-red-300')}
+					{@render joinButtons('RED', 'OPERATIVE', 'bg-red-200 text-red-800 hover:bg-red-300')}
 				</div>
 				<div class="min-h-[100px] rounded bg-white p-4 shadow-sm">
 					{#each getPlayers('RED', 'OPERATIVE') as p (p.player_id.id)}
@@ -118,7 +142,7 @@
 			<div class="mb-6">
 				<div class="mb-2 flex items-center justify-between">
 					<h3 class="font-semibold text-blue-900">Spymaster</h3>
-					{@render joinButton('BLUE', 'SPYMASTER', 'bg-blue-200 text-blue-800 hover:bg-blue-300')}
+					{@render joinButtons('BLUE', 'SPYMASTER', 'bg-blue-200 text-blue-800 hover:bg-blue-300')}
 				</div>
 				<div class="min-h-[60px] rounded bg-white p-4 shadow-sm">
 					{#each getPlayers('BLUE', 'SPYMASTER') as p (p.player_id.id)}
@@ -133,7 +157,7 @@
 			<div>
 				<div class="mb-2 flex items-center justify-between">
 					<h3 class="font-semibold text-blue-900">Operatives</h3>
-					{@render joinButton('BLUE', 'OPERATIVE', 'bg-blue-200 text-blue-800 hover:bg-blue-300')}
+					{@render joinButtons('BLUE', 'OPERATIVE', 'bg-blue-200 text-blue-800 hover:bg-blue-300')}
 				</div>
 				<div class="min-h-[100px] rounded bg-white p-4 shadow-sm">
 					{#each getPlayers('BLUE', 'OPERATIVE') as p (p.player_id.id)}

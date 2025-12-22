@@ -382,7 +382,16 @@ func (s *Srv) serveGame(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 }
 
 func (s *Srv) serveRequestAI(w http.ResponseWriter, r *http.Request, creator *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
-	robotID, err := s.ai.JoinGame(game.ID)
+	var req struct {
+		Team string `json:"team"`
+		Role string `json:"role"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return httperr.BadRequest("failed to decode request AI request: %w", err)
+	}
+
+	robotID, err := s.ai.JoinGame(game.ID, req.Team, req.Role)
 	if err != nil {
 		return httperr.Internal("failed to request an AI join game %q: %w", game.ID, err)
 	}

@@ -80,6 +80,8 @@ func (s *Server) serveJoin(w http.ResponseWriter, r *http.Request) error {
 
 	var req struct {
 		GameID string `json:"game_id"`
+		Team   string `json:"team"`
+		Role   string `json:"role"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -91,10 +93,33 @@ func (s *Server) serveJoin(w http.ResponseWriter, r *http.Request) error {
 			BadRequest("no game ID given").
 			WithMessage("no game ID given")
 	}
+	if req.Team == "" {
+		return httperr.
+			BadRequest("no team given").
+			WithMessage("no team given")
+	}
+	if req.Role == "" {
+		return httperr.
+			BadRequest("no role given").
+			WithMessage("no role given")
+	}
+	role, ok := codenames.ToRole(req.Role)
+	if !ok {
+		return httperr.
+			BadRequest("bad role given").
+			WithMessage("bad role given")
+	}
+	team, ok := codenames.ToTeam(req.Team)
+	if !ok {
+		return httperr.
+			BadRequest("bad team given").
+			WithMessage("bad team given")
+	}
 	gID := codenames.GameID(req.GameID)
 
 	name := s.aiName()
 
+	// We need a client-per-bot because it has its own cookie jar for auth
 	c, err := client.New(s.webServerScheme, s.webServerAddr)
 	if err != nil {
 		return httperr.Internal("failed to init Codenames client: %w", err)
@@ -108,6 +133,10 @@ func (s *Server) serveJoin(w http.ResponseWriter, r *http.Request) error {
 
 	if err := c.JoinGame(gID); err != nil {
 		return httperr.Internal("failed to join game %q: %w", gID, err)
+	}
+
+	if err := c.AssignRole(gID, team, role); err != nil {
+		return httperr.Internal("failed to assign role %q: %w", gID, err)
 	}
 
 	s.mu.Lock()
@@ -267,12 +296,12 @@ func (s *Server) guess(b *codenames.Board, clue *codenames.Clue) (string, error)
 	guess, err := s.ai.Guess(b, clue)
 	if err != nil {
 		log.Printf("[ERROR] AI failed to make a guess: %v", err)
-		return s.guessRandomly(b, clue)
+		return s.guessRandomly(b)
 	}
 	return guess, nil
 }
 
-func (s *Server) guessRandomly(b *codenames.Board, clue *codenames.Clue) (string, error) {
+func (s *Server) guessRandomly(b *codenames.Board) (string, error) {
 	unused := codenames.Unused(b.Cards)
 	if len(unused) == 0 {
 		return "", errors.New("no available cards left on the board")

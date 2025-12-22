@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 
 	"github.com/bcspragu/Codenames/codenames"
@@ -29,10 +28,12 @@ func New(secret, scheme, addr string) *Client {
 	}
 }
 
-func (c *Client) JoinGame(gID codenames.GameID) (codenames.RobotID, error) {
+func (c *Client) JoinGame(gID codenames.GameID, team string, role string) (codenames.RobotID, error) {
 	body := struct {
 		GameID string `json:"game_id"`
-	}{string(gID)}
+		Team   string `json:"team"`
+		Role   string `json:"role"`
+	}{string(gID), team, role}
 
 	endpoint := c.scheme + "://" + c.addr + "/join"
 	req, err := http.NewRequest(http.MethodPost, endpoint, toBody(body))
@@ -51,7 +52,7 @@ func (c *Client) JoinGame(gID codenames.GameID) (codenames.RobotID, error) {
 	return codenames.RobotID(resp.RobotID), nil
 }
 
-func (c *Client) do(req *http.Request, resp interface{}) error {
+func (c *Client) do(req *http.Request, resp any) error {
 	httpResp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to make request: %w", err)
@@ -70,7 +71,7 @@ func (c *Client) do(req *http.Request, resp interface{}) error {
 	return nil
 }
 
-func toBody(req interface{}) io.Reader {
+func toBody(req any) io.Reader {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(req); err != nil {
 		return &errReader{err: err}
@@ -92,7 +93,7 @@ func (h *httpError) Error() string {
 }
 
 func handleError(resp *http.Response) error {
-	dat, err := ioutil.ReadAll(resp.Body)
+	dat, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return &httpError{
 			statusCode: resp.StatusCode,

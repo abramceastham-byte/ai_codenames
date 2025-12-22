@@ -79,8 +79,8 @@ func toWordList(targets []codenames.Card) []string {
 		// replaced with a space. The idea is that hopefully one of these appears
 		// in the source corpus.
 		if strings.Contains(c.Codename, "_") {
-			available = append(available, strings.Replace(c.Codename, "_", "", -1))
-			available = append(available, strings.Replace(c.Codename, "_", " ", -1))
+			available = append(available, strings.ReplaceAll(c.Codename, "_", ""))
+			available = append(available, strings.ReplaceAll(c.Codename, "_", " "))
 		} else {
 			available = append(available, c.Codename)
 		}

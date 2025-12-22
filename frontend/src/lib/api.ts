@@ -63,6 +63,13 @@ export class Api {
 		});
 	}
 
+	async requestAI(gameId: string, team: Team, role: Role): Promise<void> {
+		return this.post(`/api/game/${gameId}/requestAI`, {
+			team,
+			role
+		});
+	}
+
 	async startGame(
 		gameId: string,
 		randomAssignment: boolean = false
