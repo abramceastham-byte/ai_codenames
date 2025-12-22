@@ -14,11 +14,33 @@ import (
 )
 
 type AI struct {
-	Model *word2vec.Model
+	OperativeModel *word2vec.Model
+	SpymasterModel *word2vec.Model
 }
 
 // Init initializes the word2vec model.
-func New(file string) (*AI, error) {
+func New(operativeFile, spymasterFile string) (*AI, error) {
+	operativeModel, err := loadModel(operativeFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load operative model: %w", err)
+	}
+
+	var spymasterModel *word2vec.Model
+	if operativeFile == spymasterFile {
+		spymasterModel = operativeModel
+	} else {
+		if spymasterModel, err = loadModel(spymasterFile); err != nil {
+			return nil, fmt.Errorf("failed to load spymaster model: %w", err)
+		}
+	}
+
+	return &AI{
+		OperativeModel: operativeModel,
+		SpymasterModel: spymasterModel,
+	}, nil
+}
+
+func loadModel(file string) (*word2vec.Model, error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open model file %q: %w", file, err)
@@ -29,8 +51,7 @@ func New(file string) (*AI, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse model file %q: %w", file, err)
 	}
-
-	return &AI{Model: model}, nil
+	return model, nil
 }
 
 func (ai *AI) GiveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Clue, error) {
@@ -40,7 +61,7 @@ func (ai *AI) GiveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Cl
 	for _, word := range toWordList(codenames.Unrevealed(codenames.Targets(b.Cards, agent))) {
 		expr := word2vec.Expr{}
 		expr.Add(1, word)
-		matches, err := ai.Model.CosN(expr, 5)
+		matches, err := ai.SpymasterModel.CosN(expr, 50)
 		if errors.Is(err, word2vec.NotFoundError{}) {
 			continue
 		}
@@ -127,7 +148,7 @@ func (ai *AI) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
 // Similarity returns a value from 0 to 1, that is the similarity of the two
 // input words.
 func (ai *AI) similarity(a, b string) (float32, error) {
-	s, err := ai.Model.Cos(exp(strings.ToLower(a)), exp(strings.ToLower(b)))
+	s, err := ai.OperativeModel.Cos(exp(strings.ToLower(a)), exp(strings.ToLower(b)))
 	if err != nil {
 		return 0.0, fmt.Errorf("failed to determine similarity: %w", err)
 	}

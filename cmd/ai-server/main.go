@@ -31,10 +31,11 @@ func run(args []string) error {
 
 	fSet := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	var (
-		modelPath         = fSet.String("model_path", "", "Path to binary Word2Vec model data (used if --embedding_endpoint not set)")
-		embeddingEndpoint = fSet.String("embedding_endpoint", "", "URL of the Python embedding service (if set, uses instead of Word2Vec)")
-		authSecret        = fSet.String("auth_secret", "", "Secret string that callers must provide")
-		webServerEndpoint = fSet.String("web_server_endpoint", "", "The address to connect to the Codenames game web server")
+		operativeModelPath = fSet.String("operative_model_path", "", "Path to binary Word2Vec operative model data (used if --embedding_endpoint not set)")
+		spymasterModelPath = fSet.String("spymaster_model_path", "", "Path to binary Word2Vec spymaster model data (used if --embedding_endpoint not set)")
+		embeddingEndpoint  = fSet.String("embedding_endpoint", "", "URL of the Python embedding service (if set, uses instead of Word2Vec)")
+		authSecret         = fSet.String("auth_secret", "", "Secret string that callers must provide")
+		webServerEndpoint  = fSet.String("web_server_endpoint", "", "The address to connect to the Codenames game web server")
 	)
 	if err := ff.Parse(fSet, args[1:], ff.WithEnvVars()); err != nil {
 		return fmt.Errorf("failed to parse flags: %w", err)
@@ -53,11 +54,11 @@ func run(args []string) error {
 		log.Printf("Using embedding service at %s", *embeddingEndpoint)
 		ai = embedding.New(*embeddingEndpoint)
 	} else {
-		if *modelPath == "" {
-			return errors.New("--model_path or --embedding_endpoint must be provided")
+		if *operativeModelPath == "" || *spymasterModelPath == "" {
+			return errors.New("--*_model_path or --embedding_endpoint must be provided")
 		}
-		log.Printf("Using Word2Vec model from %s", *modelPath)
-		w2vAI, err := w2v.New(*modelPath)
+		log.Printf("Using Word2Vec models from %s and %s", *operativeModelPath, *spymasterModelPath)
+		w2vAI, err := w2v.New(*operativeModelPath, *spymasterModelPath)
 		if err != nil {
 			return fmt.Errorf("failed to load AI: %w", err)
 		}

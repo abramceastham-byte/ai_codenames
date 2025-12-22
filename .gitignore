@@ -13,3 +13,5 @@ data/words.txt
 data/common_words.txt
 hashKey
 node_modules
+embeddings/spymaster.bin
+embeddings/operative.bin
