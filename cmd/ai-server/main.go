@@ -1,5 +1,5 @@
 // Binary ai-server provides an AI implementation of a Codenames client.
-// It supports both Word2Vec and embedding-based backends.
+// It supports Word2Vec-based backends.
 package main
 
 import (
@@ -12,7 +12,6 @@ import (
 	"os"
 
 	"github.com/bcspragu/Codenames/cryptorand"
-	"github.com/bcspragu/Codenames/embedding"
 	"github.com/bcspragu/Codenames/w2v"
 
 	ff "github.com/peterbourgon/ff/v4"
@@ -31,9 +30,8 @@ func run(args []string) error {
 
 	fSet := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	var (
-		operativeModelPath = fSet.String("operative_model_path", "", "Path to binary Word2Vec operative model data (used if --embedding_endpoint not set)")
-		spymasterModelPath = fSet.String("spymaster_model_path", "", "Path to binary Word2Vec spymaster model data (used if --embedding_endpoint not set)")
-		embeddingEndpoint  = fSet.String("embedding_endpoint", "", "URL of the Python embedding service (if set, uses instead of Word2Vec)")
+		operativeModelPath = fSet.String("operative_model_path", "", "Path to binary Word2Vec operative model data")
+		spymasterModelPath = fSet.String("spymaster_model_path", "", "Path to binary Word2Vec spymaster model data")
 		authSecret         = fSet.String("auth_secret", "", "Secret string that callers must provide")
 		webServerEndpoint  = fSet.String("web_server_endpoint", "", "The address to connect to the Codenames game web server")
 	)
@@ -49,20 +47,14 @@ func run(args []string) error {
 		return errors.New("--web_server_endpoint must be provided")
 	}
 
-	var ai AI
-	if *embeddingEndpoint != "" {
-		log.Printf("Using embedding service at %s", *embeddingEndpoint)
-		ai = embedding.New(*embeddingEndpoint)
-	} else {
-		if *operativeModelPath == "" || *spymasterModelPath == "" {
-			return errors.New("--*_model_path or --embedding_endpoint must be provided")
-		}
-		log.Printf("Using Word2Vec models from %s and %s", *operativeModelPath, *spymasterModelPath)
-		w2vAI, err := w2v.New(*operativeModelPath, *spymasterModelPath)
-		if err != nil {
-			return fmt.Errorf("failed to load AI: %w", err)
-		}
-		ai = w2vAI
+	if *operativeModelPath == "" || *spymasterModelPath == "" {
+		return errors.New("--{operative,spymaster}_model_path must be provided")
+	}
+
+	log.Printf("Using Word2Vec models from %s and %s", *operativeModelPath, *spymasterModelPath)
+	ai, err := w2v.New(*operativeModelPath, *spymasterModelPath)
+	if err != nil {
+		return fmt.Errorf("failed to load AI: %w", err)
 	}
 
 	r := rand.New(cryptorand.NewSource())

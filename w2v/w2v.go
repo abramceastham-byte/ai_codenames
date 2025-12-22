@@ -14,29 +14,25 @@ import (
 )
 
 type AI struct {
-	OperativeModel *word2vec.Model
-	SpymasterModel *word2vec.Model
+	GloveModel      *word2vec.Model
+	ConceptNetModel *word2vec.Model
 }
 
 // Init initializes the word2vec model.
-func New(operativeFile, spymasterFile string) (*AI, error) {
-	operativeModel, err := loadModel(operativeFile)
+func New(gloveFile, conceptNetFile string) (*AI, error) {
+	gloveModel, err := loadModel(gloveFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load operative model: %w", err)
+		return nil, fmt.Errorf("failed to load glove model: %w", err)
 	}
 
-	var spymasterModel *word2vec.Model
-	if operativeFile == spymasterFile {
-		spymasterModel = operativeModel
-	} else {
-		if spymasterModel, err = loadModel(spymasterFile); err != nil {
-			return nil, fmt.Errorf("failed to load spymaster model: %w", err)
-		}
+	conceptNetModel, err := loadModel(conceptNetFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load conceptNet model: %w", err)
 	}
 
 	return &AI{
-		OperativeModel: operativeModel,
-		SpymasterModel: spymasterModel,
+		GloveModel:      gloveModel,
+		ConceptNetModel: conceptNetModel,
 	}, nil
 }
 
@@ -58,10 +54,15 @@ func (ai *AI) GiveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Cl
 	bestScore := float32(-1.0)
 	clue := "???"
 
+	clueableTargets := codenames.Unrevealed(codenames.Targets(b.Cards, agent))
+
+	// TODO: Select N random permutations of 2, 3, and 4 clueable targets, find CosN matches for each, rank top matches for each of 2, 3, and 4, pick one.
+	// Matches for 3 or 4 are necessarily going to be lower than 2, so we should have some sliding weighting that would prefer a 4 to a 3 to a 2 even if it was worse, but only slightly so.
+
 	for _, word := range toWordList(codenames.Unrevealed(codenames.Targets(b.Cards, agent))) {
 		expr := word2vec.Expr{}
 		expr.Add(1, word)
-		matches, err := ai.SpymasterModel.CosN(expr, 50)
+		matches, err := ai.ConceptNetModel.CosN(expr, 50)
 		if errors.Is(err, word2vec.NotFoundError{}) {
 			continue
 		}
@@ -148,7 +149,7 @@ func (ai *AI) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
 // Similarity returns a value from 0 to 1, that is the similarity of the two
 // input words.
 func (ai *AI) similarity(a, b string) (float32, error) {
-	s, err := ai.OperativeModel.Cos(exp(strings.ToLower(a)), exp(strings.ToLower(b)))
+	s, err := ai.GloveModel.Cos(exp(strings.ToLower(a)), exp(strings.ToLower(b)))
 	if err != nil {
 		return 0.0, fmt.Errorf("failed to determine similarity: %w", err)
 	}
