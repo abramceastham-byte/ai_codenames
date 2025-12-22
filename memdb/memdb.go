@@ -1,3 +1,5 @@
+// Package memdb provides an in-memory implementation of our database interface,
+// used exclusively to keep tests simple.
 package memdb
 
 import (

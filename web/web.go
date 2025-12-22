@@ -1,3 +1,4 @@
+// Package web contains all the handlers and logic for the Codenames web service.
 package web
 
 import (

@@ -1,4 +1,5 @@
-// codenames-local runs a game of
+// Binary codenames-local allows playing a game on the command-line, including
+// using AI players.
 package main
 
 import (

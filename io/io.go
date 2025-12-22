@@ -1,3 +1,5 @@
+// No idea what this is, looks like it might be used as a stdin/stdout
+// implementation of the Spymaster and/or Operative interfaces.
 package io
 
 import (

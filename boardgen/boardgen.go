@@ -1,3 +1,4 @@
+// Package boardgen generates realistic Codenames boards.
 package boardgen
 
 import (

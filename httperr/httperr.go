@@ -1,3 +1,6 @@
+// Package httperr is a simple helper package that simplifies our various
+// webservers by allowing handlers to return errors that contain client and logging
+// information.
 package httperr
 
 import (

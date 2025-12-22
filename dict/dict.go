@@ -1,3 +1,4 @@
+// Package dict provides a word-lookup implementation
 package dict
 
 import (

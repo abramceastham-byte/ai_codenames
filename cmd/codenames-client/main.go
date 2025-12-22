@@ -1,3 +1,4 @@
+// Binary codenames-client is command-line tool for connecting to a Codenames web service and playing a game.
 package main
 
 import (
@@ -16,8 +17,7 @@ import (
 
 func main() {
 	var (
-		serverScheme = flag.String("server_scheme", "http", "The scheme of the server to connect to to play the game.")
-		serverAddr   = flag.String("server_addr", "localhost:8080", "The address of the server to connect to to play the game.")
+		serverEndpoint = flag.String("server_endpoint", "localhost:8080", "The address of the server to connect to to play the game.")
 	)
 	flag.Parse()
 
@@ -27,7 +27,7 @@ func main() {
 	name := prompt(reader, "Enter a username: ")
 	gameToJoin := prompt(reader, "Enter a game ID to join, or blank to create a game: ", allowEmpty())
 
-	c, err := client.New(*serverScheme, *serverAddr)
+	c, err := client.New(*serverEndpoint)
 	if err != nil {
 		log.Fatalf("failed to create client: %v", err)
 	}
@@ -197,10 +197,10 @@ func guessInCards(guess string, cards []codenames.Card) bool {
 func printBoard(b *codenames.Board) {
 	table := tablewriter.NewWriter(os.Stdout)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		var row []string
 		var colors []tablewriter.Colors
-		for j := 0; j < 5; j++ {
+		for j := range 5 {
 			card := b.Cards[i*5+j]
 			var c tablewriter.Colors
 			switch card.Agent {
@@ -265,10 +265,10 @@ func lobbyShell(reader *bufio.Reader, c *client.Client, gameID codenames.GameID)
 				log.Println("invalid args, expected 4")
 				continue
 			}
-			pID := codenames.PlayerID{
-				PlayerType: codenames.PlayerTypeHuman,
-				ID:         ps[1],
-			}
+			// pID := codenames.PlayerID{
+			// 	PlayerType: codenames.PlayerTypeHuman,
+			// 	ID:         ps[1],
+			// }
 			team, ok := codenames.ToTeam(ps[2])
 			if !ok {
 				log.Printf("invalid team %q", ps[2])
@@ -281,7 +281,7 @@ func lobbyShell(reader *bufio.Reader, c *client.Client, gameID codenames.GameID)
 				continue
 			}
 
-			if err := c.AssignRole(gameID, pID, team, role); err != nil {
+			if err := c.AssignRole(gameID, team, role); err != nil {
 				log.Printf("failed to assign role: %v", err)
 			}
 			continue

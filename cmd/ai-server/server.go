@@ -27,11 +27,10 @@ type activePlayer struct {
 }
 
 type Server struct {
-	ai              *w2v.AI
-	authSecret      string
-	webServerScheme string
-	webServerAddr   string
-	r               *rand.Rand
+	ai                *w2v.AI
+	authSecret        string
+	webServerEndpoint string
+	r                 *rand.Rand
 
 	mux *http.ServeMux
 
@@ -39,14 +38,13 @@ type Server struct {
 	activePlayers map[codenames.RobotID]*activePlayer
 }
 
-func newServer(ai *w2v.AI, authSecret, webServerScheme, webServerAddr string, r *rand.Rand) *Server {
+func newServer(ai *w2v.AI, authSecret, webServerEndpoint string, r *rand.Rand) *Server {
 	srv := &Server{
-		ai:              ai,
-		authSecret:      authSecret,
-		webServerScheme: webServerScheme,
-		webServerAddr:   webServerAddr,
-		r:               r,
-		activePlayers:   make(map[codenames.RobotID]*activePlayer),
+		ai:                ai,
+		authSecret:        authSecret,
+		webServerEndpoint: webServerEndpoint,
+		r:                 r,
+		activePlayers:     make(map[codenames.RobotID]*activePlayer),
 	}
 	srv.initMux()
 	return srv
@@ -120,7 +118,7 @@ func (s *Server) serveJoin(w http.ResponseWriter, r *http.Request) error {
 	name := s.aiName()
 
 	// We need a client-per-bot because it has its own cookie jar for auth
-	c, err := client.New(s.webServerScheme, s.webServerAddr)
+	c, err := client.New(s.webServerEndpoint)
 	if err != nil {
 		return httperr.Internal("failed to init Codenames client: %w", err)
 	}
@@ -332,7 +330,7 @@ func (s *Server) handleError(h handlerFunc) http.HandlerFunc {
 	}
 }
 
-func jsonResp(w http.ResponseWriter, v interface{}) error {
+func jsonResp(w http.ResponseWriter, v any) error {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		return httperr.Internal("failed to encode response for %+v of type %T: %w", v, v, err)

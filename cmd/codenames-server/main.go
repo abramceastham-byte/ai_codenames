@@ -1,3 +1,5 @@
+// Binary codenames-server provides an HTTP-based API server that can manage
+// games in a SQLite database.
 package main
 
 import (
@@ -41,9 +43,8 @@ func run(args []string) error {
 		blockKeyPath = fSet.String("block_key_path", "blockKey", "Path to the block key for secure cookies")
 
 		// AI server-related flags
-		authSecret     = fSet.String("auth_secret", "", "Secret string that acts as a 'password' for communicating with the AI server")
-		aiServerScheme = fSet.String("ai_server_scheme", "", "The protocol to connect to the Codenames AI server")
-		aiServerAddr   = fSet.String("ai_server_addr", "", "The address to connect to the Codenames AI server")
+		authSecret       = fSet.String("auth_secret", "", "Secret string that acts as a 'password' for communicating with the AI server")
+		aiServerEndpoint = fSet.String("ai_server_endpoint", "", "The address to connect to the Codenames AI server")
 	)
 	if err := ff.Parse(fSet, args[1:], ff.WithEnvVars()); err != nil {
 		return fmt.Errorf("failed to parse flags: %w", err)
@@ -62,7 +63,7 @@ func run(args []string) error {
 		return fmt.Errorf("failed to load cookie keys: %w", err)
 	}
 
-	ai := aiclient.New(*authSecret, *aiServerScheme, *aiServerAddr)
+	ai := aiclient.New(*authSecret, *aiServerEndpoint)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)

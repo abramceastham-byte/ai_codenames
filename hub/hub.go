@@ -1,3 +1,6 @@
+// Package hub provides a wrapper around the `gorilla/websocket` package that
+// handles WebSocket-based communications between the web server and clients, where
+// clients can be web-based, CLI-based, or from the AI server.
 package hub
 
 import (

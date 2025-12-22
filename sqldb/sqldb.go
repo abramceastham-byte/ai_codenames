@@ -1,3 +1,5 @@
+// Package sqldb provides a SQLite-based implementation of our database
+// interface, used for local testing and the actual 'production' deployment.
 package sqldb
 
 import (

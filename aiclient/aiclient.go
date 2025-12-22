@@ -13,18 +13,16 @@ import (
 )
 
 type Client struct {
-	secret string
-	scheme string
-	addr   string
-	http   *http.Client
+	secret   string
+	endpoint string
+	http     *http.Client
 }
 
-func New(secret, scheme, addr string) *Client {
+func New(secret, endpoint string) *Client {
 	return &Client{
-		secret: secret,
-		scheme: scheme,
-		addr:   addr,
-		http:   http.DefaultClient,
+		secret:   secret,
+		endpoint: endpoint,
+		http:     http.DefaultClient,
 	}
 }
 
@@ -35,7 +33,7 @@ func (c *Client) JoinGame(gID codenames.GameID, team string, role string) (coden
 		Role   string `json:"role"`
 	}{string(gID), team, role}
 
-	endpoint := c.scheme + "://" + c.addr + "/join"
+	endpoint := c.endpoint + "/join"
 	req, err := http.NewRequest(http.MethodPost, endpoint, toBody(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to form request: %w", err)

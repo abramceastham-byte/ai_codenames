@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/bcspragu/Codenames/codenames"
@@ -20,12 +21,16 @@ type wsClient struct {
 }
 
 func (c *Client) ListenForUpdates(gID codenames.GameID, hooks WSHooks) error {
+	endpointURL, err := url.Parse(c.endpoint)
+	if err != nil {
+		return fmt.Errorf("failed to parse endpoint URL %q: %w", c.endpoint, err)
+	}
 	scheme := "ws"
-	if c.scheme == "https" {
+	if endpointURL.Scheme == "https" {
 		scheme = "wss"
 	}
 
-	addr := scheme + "://" + c.addr + "/api/game/" + string(gID) + "/ws"
+	addr := scheme + "://" + endpointURL.Host + "/api/game/" + string(gID) + "/ws"
 
 	dialer := &websocket.Dialer{
 		Proxy:            http.ProxyFromEnvironment,

@@ -1,3 +1,4 @@
+// Package client provides an HTTP + WebSocket based client for the Codenames web server.
 package client
 
 import (
@@ -13,21 +14,19 @@ import (
 )
 
 type Client struct {
-	scheme string
-	addr   string
-	http   *http.Client
+	endpoint string
+	http     *http.Client
 }
 
-func New(scheme, addr string) (*Client, error) {
+func New(endpoint string) (*Client, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cookie jar: %v", err)
 	}
 
 	return &Client{
-		scheme: scheme,
-		addr:   addr,
-		http:   &http.Client{Jar: jar},
+		endpoint: endpoint,
+		http:     &http.Client{Jar: jar},
 	}, nil
 }
 
@@ -36,7 +35,7 @@ func (c *Client) CreateUser(name string, pt codenames.PlayerType) (string, error
 		Name string `json:"name"`
 	}{name}
 
-	endpoint := c.scheme + "://" + c.addr + "/api/"
+	endpoint := c.endpoint + "/api/"
 	switch pt {
 	case codenames.PlayerTypeHuman:
 		endpoint += "user"
@@ -61,7 +60,7 @@ func (c *Client) CreateUser(name string, pt codenames.PlayerType) (string, error
 }
 
 func (c *Client) CreateGame() (codenames.GameID, error) {
-	req, err := http.NewRequest(http.MethodPost, c.scheme+"://"+c.addr+"/api/game", nil)
+	req, err := http.NewRequest(http.MethodPost, c.endpoint+"/api/game", nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to form request: %w", err)
 	}
@@ -76,7 +75,7 @@ func (c *Client) CreateGame() (codenames.GameID, error) {
 }
 
 func (c *Client) Players(gID codenames.GameID) ([]*web.Player, error) {
-	req, err := http.NewRequest(http.MethodGet, c.scheme+"://"+c.addr+"/api/game/"+string(gID)+"/players", nil)
+	req, err := http.NewRequest(http.MethodGet, c.endpoint+"/api/game/"+string(gID)+"/players", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to form request: %w", err)
 	}
@@ -89,7 +88,7 @@ func (c *Client) Players(gID codenames.GameID) ([]*web.Player, error) {
 }
 
 func (c *Client) JoinGame(gID codenames.GameID) error {
-	req, err := http.NewRequest(http.MethodPost, c.scheme+"://"+c.addr+"/api/game/"+string(gID)+"/join", nil)
+	req, err := http.NewRequest(http.MethodPost, c.endpoint+"/api/game/"+string(gID)+"/join", nil)
 	if err != nil {
 		return fmt.Errorf("failed to form request: %w", err)
 	}
@@ -102,7 +101,7 @@ func (c *Client) JoinGame(gID codenames.GameID) error {
 }
 
 func (c *Client) RequestAI(gID codenames.GameID) (codenames.RobotID, error) {
-	req, err := http.NewRequest(http.MethodPost, c.scheme+"://"+c.addr+"/api/game/"+string(gID)+"/requestAI", nil)
+	req, err := http.NewRequest(http.MethodPost, c.endpoint+"/api/game/"+string(gID)+"/requestAI", nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to form request: %w", err)
 	}
@@ -124,7 +123,7 @@ func (c *Client) AssignRole(gID codenames.GameID, team codenames.Team, role code
 		Role string `json:"role"`
 	}{string(team), string(role)}
 
-	req, err := http.NewRequest(http.MethodPost, c.scheme+"://"+c.addr+"/api/game/"+string(gID)+"/assignRole", toBody(body))
+	req, err := http.NewRequest(http.MethodPost, c.endpoint+"/api/game/"+string(gID)+"/assignRole", toBody(body))
 	if err != nil {
 		return fmt.Errorf("failed to form request: %w", err)
 	}
@@ -141,7 +140,7 @@ func (c *Client) StartGame(gID codenames.GameID) error {
 		RandomAssignment bool `json:"random_assignment"`
 	}{true}
 
-	req, err := http.NewRequest(http.MethodPost, c.scheme+"://"+c.addr+"/api/game/"+string(gID)+"/start", toBody(body))
+	req, err := http.NewRequest(http.MethodPost, c.endpoint+"/api/game/"+string(gID)+"/start", toBody(body))
 	if err != nil {
 		return fmt.Errorf("failed to form request: %w", err)
 	}
@@ -159,7 +158,7 @@ func (c *Client) GiveClue(gID codenames.GameID, clue *codenames.Clue) error {
 		Count int    `json:"count"`
 	}{clue.Word, clue.Count}
 
-	req, err := http.NewRequest(http.MethodPost, c.scheme+"://"+c.addr+"/api/game/"+string(gID)+"/clue", toBody(body))
+	req, err := http.NewRequest(http.MethodPost, c.endpoint+"/api/game/"+string(gID)+"/clue", toBody(body))
 	if err != nil {
 		return fmt.Errorf("failed to form request: %w", err)
 	}
@@ -177,7 +176,7 @@ func (c *Client) GiveGuess(gID codenames.GameID, guess string, confirmed bool) e
 		Confirmed bool   `json:"confirmed"`
 	}{guess, confirmed}
 
-	req, err := http.NewRequest(http.MethodPost, c.scheme+"://"+c.addr+"/api/game/"+string(gID)+"/guess", toBody(body))
+	req, err := http.NewRequest(http.MethodPost, c.endpoint+"/api/game/"+string(gID)+"/guess", toBody(body))
 	if err != nil {
 		return fmt.Errorf("failed to form request: %w", err)
 	}

@@ -1,3 +1,6 @@
+// Binary boardgen-cli is a tool for printing out a randomized list of Codenames
+// cards. This can be used as input to a local game, but otherwise is not that
+// useful.
 package main
 
 import (

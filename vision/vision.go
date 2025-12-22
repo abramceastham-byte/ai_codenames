@@ -1,3 +1,5 @@
+// Package vision contains the code for parsing (or at least attempting to
+// parse) a Codenames board from a picture.
 package vision
 
 import (

@@ -1,3 +1,7 @@
+// Package game provides an implementation of the logic for playing a game of
+// Codenames. It supports two methods of running, either "plug in some interfaces
+// for players and run `Play()`", or get input gradually and feed it into the
+// `Move()` handler.
 package game
 
 import (

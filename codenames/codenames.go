@@ -1,3 +1,7 @@
+// Package codenames contains all of our domain types, and an interface for
+// databases to implement, which should really live in the `web` package, but
+// I wrote a lot of this before I understood how to properly structure these
+// things.
 package codenames
 
 import (
