@@ -27,7 +27,7 @@ queries = [
     "shot",
     "bond",
     "concert",
-    "scuba_diver",
+    "scuba diver",
     "glass",
     "mine",
     "shop",
@@ -40,7 +40,7 @@ queries = [
     "platypus",
 ]
 documents = [
-    "space",
+    "war",
 ]
 
 # Encode the queries and documents. Note that queries benefit from using a prompt
@@ -51,6 +51,10 @@ document_embeddings = model.encode(documents)
 
 # Compute the (cosine) similarity between the query and document embeddings
 similarity = model.similarity(query_embeddings, document_embeddings)
-print(similarity)
-# tensor([[0.7646, 0.1414],
-#         [0.1355, 0.6000]])
+
+# Zip queries with their similarity scores and sort by score (descending)
+results = [(query, score[0].item()) for query, score in zip(queries, similarity)]
+results.sort(key=lambda x: x[1], reverse=True)
+
+for query, score in results:
+    print(f"{query}: {score:.4f}")
