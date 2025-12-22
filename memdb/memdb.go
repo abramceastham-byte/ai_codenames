@@ -202,9 +202,10 @@ func (db *DB) StartGame(gID codenames.GameID) error {
 	})
 }
 
-func (db *DB) UpdateState(gID codenames.GameID, gs *codenames.GameState) error {
+func (db *DB) UpdateState(gID codenames.GameID, gs *codenames.GameState, stat codenames.GameStatus) error {
 	return db.updateGame(gID, func(g *codenames.Game) {
 		g.State = gs.Clone()
+		g.Status = stat
 	})
 }
 

@@ -8,11 +8,11 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/bcspragu/Codenames/codenames"
 	"github.com/bcspragu/Codenames/memdb"
+	"github.com/bcspragu/Codenames/msgs"
 	"github.com/google/go-cmp/cmp"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/securecookie"
@@ -24,7 +24,7 @@ func TestBasicallyEverything(t *testing.T) {
 	// more modular tests.
 	env := setup()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		env.createUser(t, fmt.Sprintf("Test%d", i))
 	}
 
@@ -52,6 +52,7 @@ func TestBasicallyEverything(t *testing.T) {
 			ActiveRole:   codenames.SpymasterRole,
 			Board:        &codenames.Board{Cards: startingBoardCards()},
 			StartingTeam: codenames.BlueTeam,
+			Clues:        []codenames.SpymasterClue{},
 		},
 	}
 	if diff := cmp.Diff(wantGame, gotGame); diff != "" {
@@ -64,7 +65,7 @@ func TestBasicallyEverything(t *testing.T) {
 		t.Errorf("unexpected pending game IDs (-want +got)\n%s", diff)
 	}
 
-	checkPlayers := func(wantPlayers []*Player) {
+	checkPlayers := func(wantPlayers []*msgs.Player) {
 		gotPlayers := env.players(t, gID, 0)
 		if diff := cmp.Diff(wantPlayers, gotPlayers); diff != "" {
 			t.Errorf("expected players in game (-want +got)\n%s", diff)
@@ -80,11 +81,11 @@ func TestBasicallyEverything(t *testing.T) {
 	}
 
 	// Now, we expect everyone in, but nobody has a role.
-	checkPlayers([]*Player{
-		&Player{PlayerID: human("user_0"), Name: "Test0"},
-		&Player{PlayerID: human("user_1"), Name: "Test1"},
-		&Player{PlayerID: human("user_2"), Name: "Test2"},
-		&Player{PlayerID: human("user_3"), Name: "Test3"},
+	checkPlayers([]*msgs.Player{
+		&msgs.Player{PlayerID: human("user_0"), Name: "Test0"},
+		&msgs.Player{PlayerID: human("user_1"), Name: "Test1"},
+		&msgs.Player{PlayerID: human("user_2"), Name: "Test2"},
+		&msgs.Player{PlayerID: human("user_3"), Name: "Test3"},
 	})
 
 	// Have the game creator assign roles.
@@ -98,26 +99,26 @@ func TestBasicallyEverything(t *testing.T) {
 	assignRole(3, codenames.OperativeRole, codenames.RedTeam)
 
 	// Now, we expect everyone has a role.
-	checkPlayers([]*Player{
-		&Player{
+	checkPlayers([]*msgs.Player{
+		&msgs.Player{
 			PlayerID: human("user_0"),
 			Name:     "Test0",
 			Role:     codenames.SpymasterRole,
 			Team:     codenames.BlueTeam,
 		},
-		&Player{
+		&msgs.Player{
 			PlayerID: human("user_1"),
 			Name:     "Test1",
 			Role:     codenames.SpymasterRole,
 			Team:     codenames.RedTeam,
 		},
-		&Player{
+		&msgs.Player{
 			PlayerID: human("user_2"),
 			Name:     "Test2",
 			Role:     codenames.OperativeRole,
 			Team:     codenames.BlueTeam,
 		},
-		&Player{
+		&msgs.Player{
 			PlayerID: human("user_3"),
 			Name:     "Test3",
 			Role:     codenames.OperativeRole,
@@ -179,10 +180,15 @@ func (env *testEnv) createUser(t *testing.T, name string) {
 	if auth == "" {
 		t.Fatal("no auth was provided in create user response")
 	}
-	if !strings.HasPrefix(auth, "Authorization=") {
-		t.Fatalf("malformed authorization cookie %q", auth)
+	header := http.Header{}
+	header.Add("Cookie", auth)
+	request := http.Request{Header: header}
+	parsedCookies := request.Cookies()
+	for _, c := range parsedCookies {
+		if c.Name == "Authorization" {
+			env.userAuth = append(env.userAuth, c)
+		}
 	}
-	env.userAuth = append(env.userAuth, strings.TrimPrefix(auth, "Authorization="))
 }
 
 func (env *testEnv) user(t *testing.T, authIdx int) *codenames.User {
@@ -200,8 +206,12 @@ func (env *testEnv) user(t *testing.T, authIdx int) *codenames.User {
 }
 
 func (env *testEnv) createGame(t *testing.T, authIdx int) codenames.GameID {
+	req := struct {
+		Private bool `json:"private"`
+	}{false}
+
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/api/game", nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/game", toBody(t, req))
 	env.addAuth(r, authIdx)
 
 	if err := env.srv.serveCreateGame(w, r); err != nil {
@@ -244,7 +254,7 @@ func (env *testEnv) joinGame(t *testing.T, gID codenames.GameID, authIdx int) {
 	}
 }
 
-func (env *testEnv) players(t *testing.T, gID codenames.GameID, authIdx int) []*Player {
+func (env *testEnv) players(t *testing.T, gID codenames.GameID, authIdx int) []*msgs.Player {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/game/"+string(gID)+"/players", nil)
 	r = mux.SetURLVars(r, map[string]string{"id": string(gID)})
@@ -255,7 +265,7 @@ func (env *testEnv) players(t *testing.T, gID codenames.GameID, authIdx int) []*
 		t.Fatalf("failed to get players: %v", err)
 	}
 
-	var resp []*Player
+	var resp []*msgs.Player
 	fromBody(t, w, &resp)
 	return resp
 }
@@ -299,13 +309,10 @@ func (env *testEnv) startGame(t *testing.T, gID codenames.GameID, authIdx int) {
 }
 
 func (env *testEnv) addAuth(r *http.Request, authIdx int) {
-	r.AddCookie(&http.Cookie{
-		Name:  "Authorization",
-		Value: env.userAuth[authIdx],
-	})
+	r.AddCookie(env.userAuth[authIdx])
 }
 
-func toBody(t *testing.T, body interface{}) io.Reader {
+func toBody(t *testing.T, body any) io.Reader {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		t.Fatalf("failed to encode body: %v", err)
@@ -322,7 +329,7 @@ func fromBody(t *testing.T, w *httptest.ResponseRecorder, resp interface{}) {
 type testEnv struct {
 	db       *memdb.DB
 	srv      *Srv
-	userAuth []string
+	userAuth []*http.Cookie
 }
 
 func setup() *testEnv {

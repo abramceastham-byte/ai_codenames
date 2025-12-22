@@ -3,6 +3,7 @@ package w2v
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sort"
 	"strings"
@@ -101,7 +102,8 @@ func (ai *AI) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
 			continue
 		}
 		if err != nil {
-			return "", fmt.Errorf("failed to get similarity of %q and %q: %w", c.Word, word, err)
+			log.Printf("failed to get similarity of %q and %q: %v", c.Word, word, err)
+			continue
 		}
 
 		pairs = append(pairs, pair{
@@ -115,6 +117,10 @@ func (ai *AI) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
 		return pairs[i].Similarity > pairs[j].Similarity
 	})
 
+	// This is a crutch for when the player enters a word that isn't in the model.
+	if len(pairs) == 0 {
+		return "", nil
+	}
 	return pairs[0].Word, nil
 }
 

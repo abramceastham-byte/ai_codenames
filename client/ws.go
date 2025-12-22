@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/bcspragu/Codenames/codenames"
-	"github.com/bcspragu/Codenames/web"
+	"github.com/bcspragu/Codenames/msgs"
 	"github.com/gorilla/websocket"
 )
 
@@ -110,7 +110,7 @@ func (ws *wsClient) handleMessages() {
 }
 
 func (ws *wsClient) handleGameStart(dat []byte) {
-	var gs web.GameStart
+	var gs msgs.GameStart
 	if err := json.Unmarshal(dat, &gs); err != nil {
 		log.Printf("handleGameStart: %v", err)
 		return
@@ -125,7 +125,7 @@ func (ws *wsClient) handleGameStart(dat []byte) {
 }
 
 func (ws *wsClient) handleClueGiven(dat []byte) {
-	var cg web.ClueGiven
+	var cg msgs.ClueGiven
 	if err := json.Unmarshal(dat, &cg); err != nil {
 		log.Printf("handleClueGiven: %v", err)
 		return
@@ -138,7 +138,7 @@ func (ws *wsClient) handleClueGiven(dat []byte) {
 }
 
 func (ws *wsClient) handlePlayerVote(dat []byte) {
-	var pv web.PlayerVote
+	var pv msgs.PlayerVote
 	if err := json.Unmarshal(dat, &pv); err != nil {
 		log.Printf("handlePlayerVote: %v", err)
 		return
@@ -151,7 +151,7 @@ func (ws *wsClient) handlePlayerVote(dat []byte) {
 }
 
 func (ws *wsClient) handleGuessGiven(dat []byte) {
-	var gg web.GuessGiven
+	var gg msgs.GuessGiven
 	if err := json.Unmarshal(dat, &gg); err != nil {
 		log.Printf("handleGuessGiven: %v", err)
 		return
@@ -164,7 +164,7 @@ func (ws *wsClient) handleGuessGiven(dat []byte) {
 }
 
 func (ws *wsClient) handleGameEnd(dat []byte) {
-	var ge web.GameEnd
+	var ge msgs.GameEnd
 	if err := json.Unmarshal(dat, &ge); err != nil {
 		log.Printf("handleGameEnd: %v", err)
 		return
@@ -178,9 +178,9 @@ func (ws *wsClient) handleGameEnd(dat []byte) {
 
 type WSHooks struct {
 	OnConnect    func()
-	OnStart      func(*web.GameStart)
-	OnClueGiven  func(*web.ClueGiven)
-	OnPlayerVote func(*web.PlayerVote)
-	OnGuessGiven func(*web.GuessGiven)
-	OnEnd        func(*web.GameEnd)
+	OnStart      func(*msgs.GameStart)
+	OnClueGiven  func(*msgs.ClueGiven)
+	OnPlayerVote func(*msgs.PlayerVote)
+	OnGuessGiven func(*msgs.GuessGiven)
+	OnEnd        func(*msgs.GameEnd)
 }

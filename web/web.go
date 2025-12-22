@@ -16,6 +16,7 @@ import (
 	"github.com/bcspragu/Codenames/game"
 	"github.com/bcspragu/Codenames/httperr"
 	"github.com/bcspragu/Codenames/hub"
+	"github.com/bcspragu/Codenames/msgs"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/securecookie"
 	"github.com/gorilla/websocket"
@@ -452,7 +453,7 @@ func (s *Srv) serveJoinGame(w http.ResponseWriter, r *http.Request, p *codenames
 
 	// This is kinda a hack because they technically don't have a role assigned, but it's fine for our use case.
 	if err := s.broadcastMessage(game, prs, func(g *codenames.Game) any {
-		return &RoleAssigned{
+		return &msgs.RoleAssigned{
 			Players: players,
 		}
 	}); err != nil {
@@ -557,7 +558,7 @@ func (s *Srv) serveAssignRole(w http.ResponseWriter, r *http.Request, creator *c
 	}
 
 	if err := s.broadcastMessage(game, prs, func(g *codenames.Game) any {
-		return &RoleAssigned{
+		return &msgs.RoleAssigned{
 			Players: players,
 		}
 	}); err != nil {
@@ -626,7 +627,7 @@ func (s *Srv) serveStartGame(w http.ResponseWriter, r *http.Request, p *codename
 	}
 
 	if err := s.broadcastMessage(game, prs, func(g *codenames.Game) any {
-		return &GameStart{
+		return &msgs.GameStart{
 			Game:    g,
 			Players: players,
 		}
@@ -727,7 +728,7 @@ func (s *Srv) finishAssigningRoles(game *codenames.Game, prs []*codenames.Player
 	return len(unassigned) > 0, nil
 }
 
-func (s *Srv) toPlayers(prs []*codenames.PlayerRole) ([]*Player, error) {
+func (s *Srv) toPlayers(prs []*codenames.PlayerRole) ([]*msgs.Player, error) {
 	var ids []codenames.PlayerID
 	for _, pr := range prs {
 		ids = append(ids, pr.PlayerID)
@@ -738,13 +739,13 @@ func (s *Srv) toPlayers(prs []*codenames.PlayerRole) ([]*Player, error) {
 		return nil, fmt.Errorf("failed to load player names: %w", err)
 	}
 
-	var out []*Player
+	var out []*msgs.Player
 	for _, pr := range prs {
 		name, ok := names[pr.PlayerID]
 		if !ok {
 			return nil, fmt.Errorf("no name was returned for player ID %q", pr.PlayerID)
 		}
-		out = append(out, &Player{
+		out = append(out, &msgs.Player{
 			PlayerID: pr.PlayerID,
 			Name:     name,
 			Team:     pr.Team,
@@ -824,7 +825,7 @@ func (s *Srv) serveClue(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 
 	// Send the clue down to everyone.
 	if err := s.broadcastMessage(g, prs, func(g *codenames.Game) interface{} {
-		return &ClueGiven{
+		return &msgs.ClueGiven{
 			Clue: clue,
 			Team: userPR.Team,
 			Game: g,
@@ -870,7 +871,7 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 			WithMessage(fmt.Sprintf("guess %q didn't correspond to a card", req.Guess))
 	}
 
-	if err := s.hub.ToGame(g.ID, &PlayerVote{
+	if err := s.hub.ToGame(g.ID, &msgs.PlayerVote{
 		PlayerID:  p.ID,
 		Guess:     req.Guess,
 		Confirmed: req.Confirmed,
@@ -940,7 +941,7 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 	// Players can keep guessing if the game tells us its still their turn.
 	canKeepGuessing := newState.ActiveRole == codenames.OperativeRole && newStatus != codenames.Finished
 	if err := s.broadcastMessage(g, prs, func(g *codenames.Game) any {
-		return &GuessGiven{
+		return &msgs.GuessGiven{
 			Guess:           guess,
 			Team:            userPR.Team,
 			CanKeepGuessing: canKeepGuessing,
@@ -967,7 +968,7 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 	}
 
 	// The game is over, we should let folks know.
-	if err := s.hub.ToGame(g.ID, &GameEnd{
+	if err := s.hub.ToGame(g.ID, &msgs.GameEnd{
 		WinningTeam: winningTeam,
 		Game:        g,
 	}); err != nil {

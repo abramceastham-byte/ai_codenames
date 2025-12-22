@@ -1,4 +1,4 @@
-package web
+package msgs
 
 import (
 	"encoding/json"

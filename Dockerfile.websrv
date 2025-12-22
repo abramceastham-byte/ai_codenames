@@ -1,4 +1,4 @@
-# docker build -t registryext.bsprague.com/codenames .
+# docker build -t registryext.bsprague.com/codenames -f Dockerfile.websrv .
 FROM golang:1.25.4 AS builder
 
 RUN adduser \
@@ -27,6 +27,7 @@ COPY dict/ dict/
 COPY game/ game/
 COPY httperr/ httperr/
 COPY hub/ hub/
+COPY msgs/ msgs/
 COPY sqldb/ sqldb/
 COPY web/ web/
 

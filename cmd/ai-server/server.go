@@ -14,8 +14,8 @@ import (
 	"github.com/bcspragu/Codenames/client"
 	"github.com/bcspragu/Codenames/codenames"
 	"github.com/bcspragu/Codenames/httperr"
+	"github.com/bcspragu/Codenames/msgs"
 	"github.com/bcspragu/Codenames/w2v"
-	"github.com/bcspragu/Codenames/web"
 )
 
 const (
@@ -178,7 +178,7 @@ func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.
 		OnConnect: func() {
 			// TODO(bcspragu): Decide if we need to do anything once we connect.
 		},
-		OnStart: func(gs *web.GameStart) {
+		OnStart: func(gs *msgs.GameStart) {
 			for _, p := range gs.Players {
 				if !p.PlayerID.IsRobot(rID) {
 					continue
@@ -201,7 +201,7 @@ func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.
 				}
 			}
 		},
-		OnClueGiven: func(cg *web.ClueGiven) {
+		OnClueGiven: func(cg *msgs.ClueGiven) {
 			if cg.Team == team {
 				lastClue = cg.Clue
 			}
@@ -223,7 +223,7 @@ func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.
 				return
 			}
 		},
-		OnGuessGiven: func(gg *web.GuessGiven) {
+		OnGuessGiven: func(gg *msgs.GuessGiven) {
 			// We only want to formulate a clue when the *other* team has just
 			// finished guessing.
 			if gg.Team != team && !gg.CanKeepGuessing && role == codenames.SpymasterRole {
@@ -292,7 +292,7 @@ func toAgent(team codenames.Team) codenames.Agent {
 
 func (s *Server) guess(b *codenames.Board, clue *codenames.Clue) (string, error) {
 	guess, err := s.ai.Guess(b, clue)
-	if err != nil {
+	if err != nil || guess == "" {
 		log.Printf("[ERROR] AI failed to make a guess: %v", err)
 		return s.guessRandomly(b)
 	}

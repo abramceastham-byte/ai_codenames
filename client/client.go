@@ -10,7 +10,7 @@ import (
 	"net/http/cookiejar"
 
 	"github.com/bcspragu/Codenames/codenames"
-	"github.com/bcspragu/Codenames/web"
+	"github.com/bcspragu/Codenames/msgs"
 )
 
 type Client struct {
@@ -74,13 +74,13 @@ func (c *Client) CreateGame() (codenames.GameID, error) {
 	return codenames.GameID(resp.ID), nil
 }
 
-func (c *Client) Players(gID codenames.GameID) ([]*web.Player, error) {
+func (c *Client) Players(gID codenames.GameID) ([]*msgs.Player, error) {
 	req, err := http.NewRequest(http.MethodGet, c.endpoint+"/api/game/"+string(gID)+"/players", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to form request: %w", err)
 	}
 
-	var resp []*web.Player
+	var resp []*msgs.Player
 	if err := c.do(req, &resp); err != nil {
 		return nil, fmt.Errorf("failed to load players: %w", err)
 	}
