@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { gameStore } from '$lib/game.svelte';
-	import { api } from '$lib/api';
+	import { Api } from '$lib/api';
 	import type { Team, Role, Player } from '$lib/types';
 
 	const { game, players, user } = $derived(gameStore);
+	const api = new Api();
 
 	function getPlayers(team: Team, role: Role): Player[] {
 		return players.filter((p) => p.team === team && p.role === role);
@@ -11,13 +12,8 @@
 
 	async function joinRole(team: Team, role: Role) {
 		if (!game || !user || !gameStore.user) return;
-		// Need to construct PlayerID properly
-		await api.assignRole(game.id, { player_type: 'HUMAN', id: gameStore.user.id }, team, role);
-		// Update players list locally or wait for WS?
-		// WS usually sends updates, but we also re-fetch in api wrapper usually.
-		// Actually api.assignRole returns Player[].
-		const newPlayers = await api.getGamePlayers(game.id);
-		gameStore.players = newPlayers;
+		const newPlayers = await api.assignRole(game.id, team, role);
+		gameStore.players = newPlayers
 	}
 
 	async function startGame() {

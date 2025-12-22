@@ -1,17 +1,23 @@
-import { type Game, type Player, type Team, type WsMessage } from './types';
-import { api } from './api';
+import { type Game, type Player, type Team, type WsMessage, type PlayerVote, type PlayerID } from './types';
+import { Api } from '$lib/api';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { PUBLIC_API_URL } from '$env/static/public';
+import { SvelteMap } from 'svelte/reactivity';
 
 
 export class GameStore {
+	api = new Api()
+
 	// User State
 	user = $state<{ id: string; name: string } | null>(null);
 
 	// Game State
 	game = $state<Game | null>(null);
 	players = $state<Player[]>([]);
+
+	// Vote tracking: Map of playerID -> player votes
+	votes = new SvelteMap<string, PlayerVote>();
 
 	// UI State
 	connected = $state(false);
@@ -27,9 +33,9 @@ export class GameStore {
 
 	ws: WebSocket | null = null;
 
-	async restoreSession() {
+	async restoreSession(fetch: typeof window.fetch) {
 		try {
-			const u = await api.getUser();
+			const u = await new Api(fetch).getUser();
 			if (u) {
 				this.user = u;
 			}
@@ -39,7 +45,7 @@ export class GameStore {
 	}
 
 	async login(name: string) {
-		const res = await api.createUser(name);
+		const res = await this.api.createUser(name);
 		if (res.success) {
 			this.user = { id: res.user_id, name };
 			const redirect = new URLSearchParams(window.location.search).get('redirect')
@@ -53,8 +59,8 @@ export class GameStore {
 
 	async fetchGame(id: string) {
 		try {
-			this.game = await api.getGame(id);
-			this.players = await api.getGamePlayers(id);
+			this.game = await this.api.getGame(id);
+			this.players = await this.api.getGamePlayers(id);
 			this.connectWs(id);
 		} catch (e) {
 			this.error = 'Failed to load game: ' + e;
@@ -96,6 +102,8 @@ export class GameStore {
 		switch (msg.action) {
 			case 'GAME_START':
 				if (msg.players) this.players = msg.players;
+				// Clear votes when game starts
+				this.votes.clear();
 				break;
 			case 'ROLE_ASSIGNED':
 				if (msg.players) this.players = msg.players;
@@ -107,18 +115,34 @@ export class GameStore {
 				break;
 			case 'GUESS_GIVEN':
 				// Card update is handled by msg.game update above,
-				// but we could animate or show a toast here
+				// Clear votes after a guess is confirmed
+				this.votes.clear();
 				break;
 			case 'GAME_END':
 				// Show victory screen logic could go here
 				break;
+			case 'PLAYER_VOTE':
+				this.handlePlayerVote(msg);
+				break;
 		}
+	}
+
+	handlePlayerVote(msg: { player_id: PlayerID; guess: string; confirmed: boolean }) {
+		const player = this.players.find( (p) => p.player_id.id === msg.player_id.id );
+		if (!player) return;
+
+		this.votes.set(player.player_id.id, {
+			playerId: msg.player_id,
+			playerName: player.name,
+			confirmed: msg.confirmed,
+			guess: msg.guess,
+		});
 	}
 
 	get myPlayer(): Player | undefined {
 		if (!this.user || !this.players) return undefined;
 		return this.players.find(
-			(p) => p.player_id.id === this.user?.id && p.player_id.player_type === 'HUMAN'
+			(p) => p.player_id.id === this.user?.id
 		);
 	}
 

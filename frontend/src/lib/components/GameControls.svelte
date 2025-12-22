@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { gameStore } from '$lib/game.svelte';
-	import { api } from '$lib/api';
+	import { Api } from '$lib/api';
+	import type { PlayerVote } from '$lib/types';
 
 	const { game, myPlayer, isMyTurn } = $derived(gameStore);
+	const api = new Api();
 
 	let clueWord = $state('');
 	let clueCount = $state(1);
@@ -26,6 +28,17 @@
 		if (!game) return;
 		await api.sendGuess(game.id, '');
 	}
+
+	const votesToEnd = $derived.by(() => {
+		const vte: PlayerVote[] = []
+		gameStore.votes.forEach((pv) => {
+			if (pv.guess !== '') {
+				return
+			}
+			vte.push(pv)
+		})
+		return vte
+	})
 </script>
 
 <div class="rounded-lg bg-white p-4 shadow-md">
@@ -76,8 +89,28 @@
 		</form>
 	{:else}
 		<div class="flex items-center justify-between">
-			<div class="text-lg font-medium text-gray-800">It's your turn to guess!</div>
-			<button onclick={endTurn} class="text-red-600 hover:underline">End Turn</button>
+			<div class="text-lg font-medium text-gray-800">You have {game?.state.num_guesses_left} {#if game?.state.num_guesses_left === 1}guess{:else}guesses{/if} remaining</div>
+			<div class="flex items-center">
+				<button onclick={endTurn} class="text-red-600 hover:underline">End Turn</button>
+				{#if votesToEnd.length > 0}
+					<div class="flex justify-center gap-1 ml-2">
+						{#each votesToEnd as vote (vote.playerId.id)}
+							<div class="group relative">
+								<div
+									class="w-2 h-2 rounded-full transition-all duration-200 {vote.confirmed
+										? 'bg-yellow-500'
+										: 'bg-transparent border border-yellow-500'}"
+								></div>
+								<div
+									class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
+								>
+									{vote.playerName} votes to end the turn
+								</div>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
 			<div class="text-sm text-gray-500">Tap a card to guess.</div>
 		</div>
 	{/if}

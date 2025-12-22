@@ -1,9 +1,9 @@
 import type { PageLoad } from './$types';
-import { api } from '$lib/api';
+import { Api } from '$lib/api';
 
-export const load: PageLoad = async () => {
+export const load: PageLoad = async ({ fetch }) => {
 	return {
-	  pendingGames: await api.getPendingGames()
+	  pendingGames: await new Api(fetch).getPendingGames()
 	};
 };
 

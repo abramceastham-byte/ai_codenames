@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { api } from '$lib/api';
+	import { Api } from '$lib/api';
 	import { gameStore } from '$lib/game.svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -8,6 +8,7 @@
 
 	let { data }: PageProps = $props();
 	const pendingGames = $derived(data.pendingGames);
+	const api = new Api();
 
 	let privateGame = $state(false);
 	let joinId = $state('');

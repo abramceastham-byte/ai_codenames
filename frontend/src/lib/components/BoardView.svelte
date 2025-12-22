@@ -1,14 +1,15 @@
 <script lang="ts">
 	import { gameStore } from '$lib/game.svelte';
-	import { api } from '$lib/api';
+	import { Api } from '$lib/api';
 	import CardComponent from './Card.svelte';
 	import GameControls from './GameControls.svelte';
 	import GameInfo from './GameInfo.svelte';
-	import type { Card } from '$lib/types';
+	import type { Card, PlayerVote } from '$lib/types';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 
 	const { game, myPlayer, isMyTurn } = $derived(gameStore);
+	const api = new Api();
 
 	// Check if spymaster view
 	const isSpymaster = $derived(myPlayer?.role === 'SPYMASTER');
@@ -38,6 +39,15 @@
 
 	const redWon = $derived(game?.state.winning_team === 'RED');
 	const blueWon = $derived(game?.state.winning_team === 'BLUE');
+	const perCardVotes = $derived.by(() => {
+		const perCardV = new Map<string, PlayerVote[]>()
+		gameStore.votes.forEach((pv) => {
+			const votes = perCardV.get(pv.guess) ?? []
+			votes.push(pv)
+			perCardV.set(pv.guess, votes)
+		})
+		return perCardV
+	})
 </script>
 
 <div class="mx-auto max-w-6xl p-4">
@@ -56,7 +66,14 @@
 	<div class="mb-8 grid grid-cols-5 gap-1 sm:gap-4">
 		{#if game?.state.board.cards}
 			{#each game.state.board.cards as card (card.codeword)}
-				<CardComponent {card} {isSpymaster} {isGameOver} isTentative={tentativeGuess === card.codeword} onClick={() => handleCardClick(card)} />
+				<CardComponent
+					{card}
+					{isSpymaster}
+					{isGameOver}
+					isTentative={tentativeGuess === card.codeword}
+					votes={perCardVotes.get(card.codeword) || []}
+					onClick={() => handleCardClick(card)}
+				/>
 			{/each}
 		{/if}
 	</div>

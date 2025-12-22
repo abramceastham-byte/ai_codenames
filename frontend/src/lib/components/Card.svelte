@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Card } from '$lib/types';
+	import type { Card, PlayerVote } from '$lib/types';
 	import { AGENT_RED, AGENT_BLUE, AGENT_ASSASSIN, AGENT_BYSTANDER } from '$lib/types';
 
 	interface Props {
@@ -7,10 +7,17 @@
 		isSpymaster: boolean;
 		isGameOver: boolean;
 		isTentative?: boolean;
+		votes?: PlayerVote[];
 		onClick: () => void;
 	}
 
-	let { card, isSpymaster, onClick, isGameOver, isTentative = false }: Props = $props();
+	let { card, isSpymaster, onClick, isGameOver, isTentative = false, votes = [] }: Props = $props();
+
+	$effect(() => {
+		if (votes.length > 0) {
+			console.log('VOTES', votes)
+		}
+	})
 
 	// Determine visual style based on state
 	// If revealed: Show actual agent color
@@ -56,29 +63,50 @@
 	const tentativeClasses = $derived(isTentative && !card.revealed ? 'ring-4 ring-yellow-400 -translate-y-1 shadow-lg' : '');
 </script>
 
-<button
-	class="flex aspect-[4/3] w-full flex-col items-center justify-center rounded-lg border-2 sm:p-2 sm:shadow-sm transition-all duration-200 {classes} {revealedClasses} {tentativeClasses}"
-	onclick={onClick}
-	disabled={card.revealed}
->
-	{#if isTentative && !card.revealed}
-		<span class="mb-1 text-xs font-semibold text-yellow-600 hidden sm:block">
-			TAP TO CONFIRM
-		</span>
-	{/if}
-	{#if card.revealed}
-		<!-- Maybe an icon for the type? -->
-		<span class="mb-1 text-xs font-bold tracking-wider uppercase opacity-75 hidden sm:block">
-			{#if card.agent === AGENT_RED}RED AGENT
-			{:else if card.agent === AGENT_BLUE}BLUE AGENT
-			{:else if card.agent === AGENT_ASSASSIN}ASSASSIN
-			{:else if card.agent === AGENT_BYSTANDER}BYSTANDER
-			{/if}
-		</span>
-	{/if}
-	<span
-		class="w-full text-center leading-tight sm:font-bold break-words uppercase text-xs sm:text-lg lg:text-xl"
+<div class="relative w-full">
+	<button
+		class="flex aspect-[4/3] w-full flex-col items-center justify-center rounded-lg border-2 sm:p-2 sm:shadow-sm transition-all duration-200 {classes} {revealedClasses} {tentativeClasses}"
+		onclick={onClick}
+		disabled={card.revealed}
 	>
-		{card.codeword.replaceAll("_", " ")}
-	</span>
-</button>
+		{#if isTentative && !card.revealed}
+			<span class="mb-1 text-xs font-semibold text-yellow-600 hidden sm:block">
+				TAP TO CONFIRM
+			</span>
+		{/if}
+		{#if card.revealed}
+			<!-- Maybe an icon for the type? -->
+			<span class="mb-1 text-xs font-bold tracking-wider uppercase opacity-75 hidden sm:block">
+				{#if card.agent === AGENT_RED}RED AGENT
+				{:else if card.agent === AGENT_BLUE}BLUE AGENT
+				{:else if card.agent === AGENT_ASSASSIN}ASSASSIN
+				{:else if card.agent === AGENT_BYSTANDER}BYSTANDER
+				{/if}
+			</span>
+		{/if}
+		<span
+			class="w-full text-center leading-tight sm:font-bold break-words uppercase text-xs sm:text-lg lg:text-xl"
+		>
+			{card.codeword.replaceAll("_", " ")}
+		</span>
+	</button>
+
+	{#if votes.length > 0 && !card.revealed}
+		<div class="absolute bottom-1 left-0 right-0 flex justify-center gap-1">
+			{#each votes as vote (vote.playerId.id)}
+				<div class="group relative">
+					<div
+						class="w-2 h-2 rounded-full transition-all duration-200 {vote.confirmed
+							? 'bg-yellow-500'
+							: 'bg-transparent border border-yellow-500'}"
+					></div>
+					<div
+						class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
+					>
+						{vote.playerName} {#if !vote.confirmed}tentatively {/if} votes for {card.codeword}
+					</div>
+				</div>
+			{/each}
+		</div>
+	{/if}
+</div>

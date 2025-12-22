@@ -1,9 +1,15 @@
 import type { Game, Player, Team, Role, PlayerID } from './types';
 import { PUBLIC_API_URL } from '$env/static/public';
 
-class Api {
+export class Api {
+	fetch: typeof window.fetch
+
+	constructor(fetch?: typeof window.fetch) {
+		this.fetch = fetch ?? window.fetch
+	}
+
 	async post<T>(url: string, body: any): Promise<T> {
-		const res = await fetch(`${PUBLIC_API_URL}${url}`, {
+		const res = await this.fetch(`${PUBLIC_API_URL}${url}`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
@@ -17,7 +23,7 @@ class Api {
 	}
 
 	async get<T>(url: string): Promise<T> {
-		const res = await fetch(`${PUBLIC_API_URL}${url}`, { credentials: 'include' });
+		const res = await this.fetch(`${PUBLIC_API_URL}${url}`, { credentials: 'include' });
 		if (!res.ok) throw new Error(res.statusText);
 		return res.json();
 	}
@@ -50,9 +56,8 @@ class Api {
 		return this.get(`/api/game/${id}/players`);
 	}
 
-	async assignRole(gameId: string, playerId: PlayerID, team: Team, role: Role): Promise<Player[]> {
+	async assignRole(gameId: string, team: Team, role: Role): Promise<Player[]> {
 		return this.post(`/api/game/${gameId}/assignRole`, {
-			player_id: playerId,
 			team,
 			role
 		});
@@ -73,5 +78,3 @@ class Api {
 		return this.post(`/api/game/${gameId}/guess`, { guess, confirmed });
 	}
 }
-
-export const api = new Api();

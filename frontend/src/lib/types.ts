@@ -93,4 +93,18 @@ export interface GameEndMsg {
 	game: Game;
 }
 
-export type WsMessage = GameStartMsg | RoleAssignedMsg | ClueGivenMsg | GuessGivenMsg | GameEndMsg;
+export interface PlayerVoteMsg {
+	action: 'PLAYER_VOTE';
+	player_id: PlayerID;
+	guess: string;
+	confirmed: boolean;
+}
+
+export interface PlayerVote {
+	playerId: PlayerID;
+	playerName: string;
+	confirmed: boolean;
+	guess: string;
+}
+
+export type WsMessage = GameStartMsg | RoleAssignedMsg | ClueGivenMsg | GuessGivenMsg | GameEndMsg | PlayerVoteMsg;

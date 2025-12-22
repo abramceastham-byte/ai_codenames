@@ -5,8 +5,8 @@ import { resolve } from '$app/paths';
 export const prerender = true;
 export const ssr = false;
 
-export const load: LayoutLoad = async () => {
-	await gameStore.restoreSession();
+export const load: LayoutLoad = async ({ fetch }) => {
+	await gameStore.restoreSession(fetch);
 	if (!gameStore.user && window.location.pathname !== '/login') {
 		let params = new URLSearchParams()
 		params.set('redirect', window.location.pathname)

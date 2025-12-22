@@ -456,21 +456,15 @@ func (s *Srv) serveJoinGame(w http.ResponseWriter, r *http.Request, p *codenames
 
 func (s *Srv) serveAssignRole(w http.ResponseWriter, r *http.Request, creator *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
 	var req struct {
-		PlayerID codenames.PlayerID `json:"player_id"`
-		Team     string             `json:"team"`
-		Role     string             `json:"role"`
+		Team string `json:"team"`
+		Role string `json:"role"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return httperr.BadRequest("failed to decode assign role request: %w", err)
 	}
 
-	if _, err := s.db.Player(req.PlayerID); err != nil {
-		return httperr.
-			BadRequest("failed to load player %q in assignRole: %w", req.PlayerID, err).
-			WithMessage("bad player ID given")
-	}
-	pID := req.PlayerID
+	pID := userPR.PlayerID
 
 	desiredRole, ok := codenames.ToRole(req.Role)
 	if !ok {
