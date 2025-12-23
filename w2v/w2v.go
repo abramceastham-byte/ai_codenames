@@ -239,10 +239,10 @@ func (ai *AI) GiveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Cl
 				expr.Add(-1, embedMapping.toEmbedWord[card.Codename])
 			}
 
-			matches := ai.CosN(ai.ConceptNetModel, expr, 5)
+			matches := ai.CosN(ai.ConceptNetModel, expr, 10)
 
 			for _, match := range matches {
-				if tooCloseToBoardWord(match.Word, b) {
+				if tooCloseToBoardWord(match.Word, b, combo) {
 					continue
 				}
 				finalScore := match.Score * countBonus(size) * multiWordPenalty(match.Word)
@@ -372,13 +372,36 @@ func combinations(input []codenames.Card, k int) [][]string {
 	return result
 }
 
-func tooCloseToBoardWord(clue string, b *codenames.Board) bool {
+func tooCloseToBoardWord(clue string, b *codenames.Board, combo []string) bool {
 	for _, card := range b.Cards {
 		if strings.Contains(clue, card.Codename) || strings.Contains(card.Codename, clue) {
 			return true
 		}
 	}
+	for _, target := range combo {
+		if hammingDistance(clue, target) < 3 {
+			return true
+		}
+	}
+
 	return false
+}
+
+// hammingDistance returns the number of positions at which the corresponding
+// characters differ. For strings of different lengths, the length difference
+// is added to the distance.
+func hammingDistance(a, b string) int {
+	a, b = strings.ToLower(a), strings.ToLower(b)
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	dist := len(b) - len(a)
+	for i := range a {
+		if a[i] != b[i] {
+			dist++
+		}
+	}
+	return dist
 }
 
 func (ai *AI) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
