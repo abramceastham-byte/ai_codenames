@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
@@ -215,7 +214,7 @@ func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.
 				// fmt.Printf("Clue was given, but I'm a/an %q on team %q\n", role, team)
 				return
 			}
-			fmt.Printf("Clue %q was given, and I'm guessing!", cg.Clue)
+			log.Printf("Clue %q was given, and I'm guessing!", cg.Clue)
 
 			guess, err := s.guess(cg.Game.State.Board, cg.Clue)
 			if err != nil {
@@ -232,7 +231,6 @@ func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.
 			// We only want to formulate a clue when the *other* team has just
 			// finished guessing.
 			if gg.Team != team && !gg.CanKeepGuessing && role == codenames.SpymasterRole {
-				fmt.Println("My turn to clue!")
 
 				clue, err := s.giveClue(gg.Game.State.Board, toAgent(team))
 				if err != nil {
@@ -249,8 +247,6 @@ func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.
 			}
 
 			if gg.Team == team && gg.CanKeepGuessing && role == codenames.OperativeRole {
-				fmt.Println("I can keep guessing!")
-
 				guess, err := s.guess(gg.Game.State.Board, lastClue)
 				if err != nil {
 					log.Printf("[ERROR] failed to make a guess for clue %+v: %v", lastClue, err)
@@ -276,7 +272,7 @@ func (s *Server) giveClue(b *codenames.Board, agent codenames.Agent) (*codenames
 	if err != nil {
 		log.Printf("[ERROR] AI failed to make a clue: %v", err)
 		return &codenames.Clue{
-			Word:  "lolgoodluck",
+			Word:  "???",
 			Count: 1,
 		}, nil
 	}

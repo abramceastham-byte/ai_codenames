@@ -116,8 +116,6 @@ func (ws *wsClient) handleGameStart(dat []byte) {
 		return
 	}
 
-	fmt.Println(string(dat))
-	fmt.Printf("%+v\n", gs)
 	if ws.hooks.OnStart == nil {
 		return
 	}
