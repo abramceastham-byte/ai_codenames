@@ -57,7 +57,7 @@ func main() {
 	)
 	if *useAI {
 		// Initialize our word2vec model.
-		ai, err = w2v.New(*modelFile)
+		ai, err = w2v.New(*modelFile, *modelFile)
 		if err != nil {
 			log.Fatalf("Failed to initialize word2vec model: %v", err)
 		}

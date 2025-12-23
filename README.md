@@ -25,8 +25,9 @@ AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenam
 cd frontend
 pnpm run dev
 
-# In a third terminal, run the AI server (only needed for AI games). Note that the model path should be changed based on whatever model you download/train/use.
-MODEL_PATH=data/w2v_model.default_params.project_gutenberg.no_phrasing.sanitized_lowercase.bin \
+# In a third terminal, run the AI server (only needed for AI games). Note that the models path should be changed based on whatever model you download/train/use.
+GLOVE_MODEL_PATH=data/glove.bin \
+CONCEPT_NET_MODEL_PATH=data/conceptnet.bin \
 AUTH_SECRET=abc123 \
 WEB_SERVER_ENDPOINT=http://localhost:8080 \
 go run ./cmd/ai-server/

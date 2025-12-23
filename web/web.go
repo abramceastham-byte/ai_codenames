@@ -797,7 +797,7 @@ func (s *Srv) serveClue(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 	}
 
 	clue := &codenames.Clue{
-		Word:  req.Word,
+		Word:  strings.ToUpper(req.Word),
 		Count: req.Count,
 	}
 	// We don't need to check if the status changed/game is over, because giving
@@ -824,7 +824,7 @@ func (s *Srv) serveClue(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 	g.Status = newStatus
 
 	// Send the clue down to everyone.
-	if err := s.broadcastMessage(g, prs, func(g *codenames.Game) interface{} {
+	if err := s.broadcastMessage(g, prs, func(g *codenames.Game) any {
 		return &msgs.ClueGiven{
 			Clue: clue,
 			Team: userPR.Team,

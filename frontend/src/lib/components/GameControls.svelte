@@ -62,7 +62,7 @@
 					id="clue-word"
 					type="text"
 					bind:value={clueWord}
-					class="w-full rounded border border-gray-300 p-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+					class="w-full rounded border border-gray-300 p-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none uppercase"
 					placeholder="e.g. Tree"
 					required
 				/>

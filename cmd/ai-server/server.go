@@ -212,10 +212,10 @@ func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.
 			}
 
 			if role != codenames.OperativeRole || cg.Team != team {
-				fmt.Printf("Clue was given, but I'm a/an %q on team %q\n", role, team)
+				// fmt.Printf("Clue was given, but I'm a/an %q on team %q\n", role, team)
 				return
 			}
-			fmt.Println("Clue was given, and I'm guessing!")
+			fmt.Printf("Clue %q was given, and I'm guessing!", cg.Clue)
 
 			guess, err := s.guess(cg.Game.State.Board, cg.Clue)
 			if err != nil {

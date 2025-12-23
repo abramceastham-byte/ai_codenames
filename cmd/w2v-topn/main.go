@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"strconv"
 	"strings"
 
@@ -33,7 +33,7 @@ func main() {
 
 	var words []string
 	if *wordList == "" {
-		content, err := ioutil.ReadFile(*wordFile)
+		content, err := os.ReadFile(*wordFile)
 		if err != nil {
 			fmt.Printf("Could not read %s: %s\n", *wordFile, err)
 		}
@@ -43,11 +43,11 @@ func main() {
 
 	}
 
-	ai, err := w2v.New(*modelFile)
+	ai, err := w2v.New(*modelFile, *modelFile)
 	if err != nil {
 		fmt.Printf("Failed to read in %s\n", *modelFile)
 	}
-	model := ai.Model
+	model := ai.ConceptNetModel
 
 	for combo := range combinations(len(words), *inputN) {
 		var buffer bytes.Buffer

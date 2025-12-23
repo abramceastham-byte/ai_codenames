@@ -11,7 +11,7 @@ import (
 
 	"github.com/bcspragu/Codenames/client"
 	"github.com/bcspragu/Codenames/codenames"
-	"github.com/bcspragu/Codenames/web"
+	"github.com/bcspragu/Codenames/msgs"
 	"github.com/olekukonko/tablewriter"
 )
 
@@ -66,7 +66,7 @@ func main() {
 				lobbyShell(reader, c, gameID)
 			}
 		},
-		OnStart: func(gs *web.GameStart) {
+		OnStart: func(gs *msgs.GameStart) {
 			for _, p := range gs.Players {
 				if p.PlayerID.ID == userID {
 					team = p.Team
@@ -85,7 +85,7 @@ func main() {
 				}
 			}
 		},
-		OnClueGiven: func(cg *web.ClueGiven) {
+		OnClueGiven: func(cg *msgs.ClueGiven) {
 			fmt.Printf("Clue Given: %q %d\n", cg.Clue.Word, cg.Clue.Count)
 
 			if role != codenames.OperativeRole || team != cg.Team {
@@ -98,10 +98,10 @@ func main() {
 				log.Fatalf("failed to give clue: %v", err)
 			}
 		},
-		OnPlayerVote: func(pv *web.PlayerVote) {
+		OnPlayerVote: func(pv *msgs.PlayerVote) {
 			// TODO: Show the vote
 		},
-		OnGuessGiven: func(gg *web.GuessGiven) {
+		OnGuessGiven: func(gg *msgs.GuessGiven) {
 			fmt.Printf("Guess was %q, card was %+v\n", gg.Guess, gg.RevealedCard)
 
 			// We're an operative on the active team and we got the last one correct
@@ -119,7 +119,7 @@ func main() {
 				}
 			}
 		},
-		OnEnd: func(ge *web.GameEnd) {
+		OnEnd: func(ge *msgs.GameEnd) {
 			fmt.Printf("Game over, %q won!", ge.WinningTeam)
 		},
 	})
@@ -303,7 +303,7 @@ func printHelp() {
 	fmt.Println()
 }
 
-func printPlayers(ps []*web.Player) {
+func printPlayers(ps []*msgs.Player) {
 	for _, p := range ps {
 		fmt.Printf("[%s] %s", p.PlayerID.ID, p.Name)
 		if p.Role != codenames.NoRole && p.Team != codenames.NoTeam {

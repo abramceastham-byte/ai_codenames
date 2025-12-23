@@ -30,10 +30,11 @@ func run(args []string) error {
 
 	fSet := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	var (
-		operativeModelPath = fSet.String("operative_model_path", "", "Path to binary Word2Vec operative model data")
-		spymasterModelPath = fSet.String("spymaster_model_path", "", "Path to binary Word2Vec spymaster model data")
-		authSecret         = fSet.String("auth_secret", "", "Secret string that callers must provide")
-		webServerEndpoint  = fSet.String("web_server_endpoint", "", "The address to connect to the Codenames game web server")
+		gloveModelPath      = fSet.String("glove_model_path", "", "Path to binary Word2Vec GloVe model data")
+		conceptNetModelPath = fSet.String("concept_net_model_path", "", "Path to binary Word2Vec ConceptNet model data")
+		authSecret          = fSet.String("auth_secret", "", "Secret string that callers must provide")
+		commonWordlist      = fSet.String("common_wordlist", "", "Path to word list of most common words, used for making guesses")
+		webServerEndpoint   = fSet.String("web_server_endpoint", "", "The address to connect to the Codenames game web server")
 	)
 	if err := ff.Parse(fSet, args[1:], ff.WithEnvVars()); err != nil {
 		return fmt.Errorf("failed to parse flags: %w", err)
@@ -47,12 +48,12 @@ func run(args []string) error {
 		return errors.New("--web_server_endpoint must be provided")
 	}
 
-	if *operativeModelPath == "" || *spymasterModelPath == "" {
-		return errors.New("--{operative,spymaster}_model_path must be provided")
+	if *gloveModelPath == "" || *conceptNetModelPath == "" {
+		return errors.New("--{glove,concept_net}_model_path must be provided")
 	}
 
-	log.Printf("Using Word2Vec models from %s and %s", *operativeModelPath, *spymasterModelPath)
-	ai, err := w2v.New(*operativeModelPath, *spymasterModelPath)
+	log.Printf("Using Word2Vec models from %s and %s", *gloveModelPath, *conceptNetModelPath)
+	ai, err := w2v.New(*gloveModelPath, *conceptNetModelPath, *commonWordlist)
 	if err != nil {
 		return fmt.Errorf("failed to load AI: %w", err)
 	}

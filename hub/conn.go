@@ -60,7 +60,7 @@ func (c *connection) readPump() {
 	})
 	for {
 		_, _, err := c.ws.ReadMessage()
-		if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) {
+		if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseNoStatusReceived, websocket.CloseAbnormalClosure) {
 			// Fine
 			break
 		} else if err != nil {
@@ -91,7 +91,7 @@ func (c *connection) writePump() {
 		select {
 		case message, ok := <-c.send:
 			if !ok {
-				if err := c.write(websocket.CloseMessage, []byte{}); err != nil && !errors.Is(err, websocket.ErrCloseSent) {
+				if err := c.write(websocket.CloseMessage, []byte{}); err != nil && !errors.Is(err, net.ErrClosed) {
 					log.Printf("failed to write close message: %v", err)
 				}
 				return
