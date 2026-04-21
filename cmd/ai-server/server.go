@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,7 +32,8 @@ type activePlayer struct {
 }
 
 type Server struct {
-	ai                AI
+	ais               map[string]AI
+	defaultBackend    string
 	authSecret        string
 	webServerEndpoint string
 	r                 *rand.Rand
@@ -42,9 +44,10 @@ type Server struct {
 	activePlayers map[codenames.RobotID]*activePlayer
 }
 
-func newServer(ai AI, authSecret, webServerEndpoint string, r *rand.Rand) *Server {
+func newServer(ais map[string]AI, defaultBackend, authSecret, webServerEndpoint string, r *rand.Rand) *Server {
 	srv := &Server{
-		ai:                ai,
+		ais:               ais,
+		defaultBackend:    defaultBackend,
 		authSecret:        authSecret,
 		webServerEndpoint: webServerEndpoint,
 		r:                 r,
@@ -57,7 +60,28 @@ func newServer(ai AI, authSecret, webServerEndpoint string, r *rand.Rand) *Serve
 func (s *Server) initMux() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/join", s.handleError(s.serveJoin))
+	mux.HandleFunc("/backends", s.handleError(s.serveBackends))
 	s.mux = mux
+}
+
+func (s *Server) serveBackends(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != http.MethodGet {
+		return httperr.MethodNotAllowed("call to backends with bad method %q", r.Method)
+	}
+	if r.Header.Get("Authorization") != s.authSecret {
+		return httperr.Forbidden("bad auth on backends request").WithMessage("invalid auth")
+	}
+
+	names := make([]string, 0, len(s.ais))
+	for k := range s.ais {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+
+	return jsonResp(w, struct {
+		Backends []string `json:"backends"`
+		Default  string   `json:"default"`
+	}{names, s.defaultBackend})
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -81,9 +105,10 @@ func (s *Server) serveJoin(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	var req struct {
-		GameID string `json:"game_id"`
-		Team   string `json:"team"`
-		Role   string `json:"role"`
+		GameID  string `json:"game_id"`
+		Team    string `json:"team"`
+		Role    string `json:"role"`
+		Backend string `json:"backend"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -119,7 +144,18 @@ func (s *Server) serveJoin(w http.ResponseWriter, r *http.Request) error {
 	}
 	gID := codenames.GameID(req.GameID)
 
-	name := s.aiName()
+	backendName := req.Backend
+	if backendName == "" {
+		backendName = s.defaultBackend
+	}
+	ai, ok := s.ais[backendName]
+	if !ok {
+		return httperr.
+			BadRequest("backend %q is not enabled on this server", backendName).
+			WithMessage("requested AI backend is not available")
+	}
+
+	name := s.aiName(backendName)
 
 	// We need a client-per-bot because it has its own cookie jar for auth
 	c, err := client.New(s.webServerEndpoint)
@@ -150,13 +186,13 @@ func (s *Server) serveJoin(w http.ResponseWriter, r *http.Request) error {
 	}
 	s.activePlayers[rID] = &activePlayer{gameID: gID}
 	s.mu.Unlock()
-	log.Printf("Created player %q in game %q", rID, gID)
+	log.Printf("Created player %q (backend=%s) in game %q", rID, backendName, gID)
 
-	// Background the process of playingk
+	// Background the process of playing.
 	go func() {
 		defer s.unlockPlayer(rID)
 
-		s.playGame(c, gID, rID)
+		s.playGame(ai, c, gID, rID)
 	}()
 
 	return jsonResp(w, struct {
@@ -171,7 +207,7 @@ func (s *Server) unlockPlayer(rID codenames.RobotID) {
 	s.mu.Unlock()
 }
 
-func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.RobotID) {
+func (s *Server) playGame(ai AI, c *client.Client, gID codenames.GameID, rID codenames.RobotID) {
 	var (
 		role     codenames.Role
 		team     codenames.Team
@@ -193,7 +229,7 @@ func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.
 			}
 
 			if role == codenames.SpymasterRole && gs.Game.State.ActiveTeam == team {
-				clue, err := s.giveClue(gs.Game.State.Board, toAgent(team))
+				clue, err := s.giveClue(ai, gs.Game.State.Board, toAgent(team))
 				if err != nil {
 					log.Printf("[ERROR] failed to make a clue: %v", err)
 					return
@@ -216,7 +252,7 @@ func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.
 			}
 			log.Printf("Clue %q was given, and I'm guessing!", cg.Clue)
 
-			guess, err := s.guess(cg.Game.State.Board, cg.Clue)
+			guess, err := s.guess(ai, cg.Game.State.Board, cg.Clue)
 			if err != nil {
 				log.Printf("[ERROR] failed to make a guess for clue %+v: %v", cg.Clue, err)
 				return
@@ -232,7 +268,7 @@ func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.
 			// finished guessing.
 			if gg.Team != team && !gg.CanKeepGuessing && role == codenames.SpymasterRole {
 
-				clue, err := s.giveClue(gg.Game.State.Board, toAgent(team))
+				clue, err := s.giveClue(ai, gg.Game.State.Board, toAgent(team))
 				if err != nil {
 					log.Printf("[ERROR] failed to make a clue: %v", err)
 					return
@@ -247,7 +283,7 @@ func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.
 			}
 
 			if gg.Team == team && gg.CanKeepGuessing && role == codenames.OperativeRole {
-				guess, err := s.guess(gg.Game.State.Board, lastClue)
+				guess, err := s.guess(ai, gg.Game.State.Board, lastClue)
 				if err != nil {
 					log.Printf("[ERROR] failed to make a guess for clue %+v: %v", lastClue, err)
 					return
@@ -267,8 +303,8 @@ func (s *Server) playGame(c *client.Client, gID codenames.GameID, rID codenames.
 	}
 }
 
-func (s *Server) giveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Clue, error) {
-	clue, err := s.ai.GiveClue(b, agent)
+func (s *Server) giveClue(ai AI, b *codenames.Board, agent codenames.Agent) (*codenames.Clue, error) {
+	clue, err := ai.GiveClue(b, agent)
 	if err != nil {
 		log.Printf("[ERROR] AI failed to make a clue: %v", err)
 		return &codenames.Clue{
@@ -291,8 +327,8 @@ func toAgent(team codenames.Team) codenames.Agent {
 	}
 }
 
-func (s *Server) guess(b *codenames.Board, clue *codenames.Clue) (string, error) {
-	guess, err := s.ai.Guess(b, clue)
+func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue) (string, error) {
+	guess, err := ai.Guess(b, clue)
 	if err != nil || guess == "" {
 		log.Printf("[ERROR] AI failed to make a guess: %v", err)
 		return s.guessRandomly(b)
@@ -309,9 +345,10 @@ func (s *Server) guessRandomly(b *codenames.Board) (string, error) {
 	return unused[s.r.Intn(len(unused))].Codename, nil
 }
 
-func (s *Server) aiName() string {
+func (s *Server) aiName(backend string) string {
 	var buf strings.Builder
-	buf.WriteString("AI-")
+	buf.WriteString(strings.ToUpper(backend))
+	buf.WriteString("-")
 	buf.WriteString(strconv.Itoa(s.r.Int()))
 	return buf.String()
 }

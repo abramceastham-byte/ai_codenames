@@ -6,12 +6,16 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/bcspragu/Codenames/boardgen"
 	"github.com/bcspragu/Codenames/codenames"
 	"github.com/bcspragu/Codenames/game"
 	"github.com/bcspragu/Codenames/io"
+	"github.com/bcspragu/Codenames/llm"
 	"github.com/bcspragu/Codenames/w2v"
 )
 
@@ -30,11 +34,16 @@ var (
 
 func main() {
 	var (
-		modelFile = flag.String("model_file", "w2v.bin", "A binary-formatted word2vec pre-trained model file.")
-		wordList  = flag.String("words", "", "Comma-separated list of words and the agent they're assigned to. Ex dog:red,wallet:blue,bowl:assassin,glass:blue,hood:bystander")
-		starter   = flag.String("starter", "red", "Which color team starts the game")
-		team      = flag.String("team", "red", "Team to be")
-		useAI     = flag.Bool("use_ai", false, "Whether or not the starting team should be an AI.")
+		gloveFile      = flag.String("glove_file", "glove.bin", "A binary-formatted GloVe word2vec model file.")
+		conceptNetFile = flag.String("concept_net_file", "conceptnet.bin", "A binary-formatted ConceptNet word2vec model file.")
+		commonWordlist = flag.String("common_wordlist", "common_words.txt", "Path to a common words file for AI clue generation.")
+		wordList       = flag.String("words", "", "Comma-separated list of words and the agent they're assigned to. Ex dog:red,wallet:blue,bowl:assassin,glass:blue,hood:bystander")
+		starter        = flag.String("starter", "red", "Which color team starts the game")
+		team           = flag.String("team", "red", "Team to be")
+		useAI          = flag.Bool("use_ai", false, "Whether or not the starting team should be an AI.")
+		aiBackend      = flag.String("ai_backend", "w2v", "AI backend to use: 'w2v' or 'llm'")
+		ollamaEndpoint = flag.String("ollama_endpoint", "http://localhost:11434", "Ollama API endpoint")
+		ollamaModel    = flag.String("ollama_model", "llama3", "Ollama model name")
 	)
 	flag.Parse()
 
@@ -46,25 +55,47 @@ func main() {
 		log.Fatal(err)
 	}
 
-	words := strings.Split(*wordList, ",")
-	if len(words) != codenames.Size {
-		log.Fatalf("Expected %d words, got %d words", codenames.Size, len(words))
+	var b *codenames.Board
+	if *wordList == "" {
+		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+		b = boardgen.New(teamMap[*starter], r)
+	} else {
+		words := strings.Split(*wordList, ",")
+		if len(words) != codenames.Size {
+			log.Fatalf("Expected %d words, got %d words", codenames.Size, len(words))
+		}
+		cards := make([]codenames.Card, len(words))
+		for i, w := range words {
+			c, err := parseCard(w)
+			if err != nil {
+				log.Fatalf("Failed on card #%d: %q: %v", i, w, err)
+			}
+			cards[i] = c
+		}
+		b = &codenames.Board{Cards: cards}
 	}
 
 	var (
-		ai  *w2v.AI
-		err error
+		sm codenames.Spymaster
+		op codenames.Operative
 	)
 	if *useAI {
-		// Initialize our word2vec model.
-		ai, err = w2v.New(*modelFile, *modelFile)
-		if err != nil {
-			log.Fatalf("Failed to initialize word2vec model: %v", err)
+		switch *aiBackend {
+		case "w2v":
+			ai, err := w2v.New(*gloveFile, *conceptNetFile, *commonWordlist)
+			if err != nil {
+				log.Fatalf("Failed to initialize word2vec model: %v", err)
+			}
+			sm, op = ai, ai
+		case "llm":
+			ai := llm.New(*ollamaEndpoint, *ollamaModel)
+			sm, op = ai, ai
+		default:
+			log.Fatalf("Unknown AI backend %q, must be 'w2v' or 'llm'", *aiBackend)
 		}
 	}
 
 	var (
-		// Spymasters get team information via the API.
 		rsm codenames.Spymaster = &io.Spymaster{In: os.Stdin, Out: os.Stdout}
 		bsm codenames.Spymaster = &io.Spymaster{In: os.Stdin, Out: os.Stdout}
 
@@ -73,23 +104,14 @@ func main() {
 	)
 
 	if *useAI {
-		switch teamMap[*starter] {
+		switch teamMap[*team] {
 		case codenames.RedTeam:
-			rsm = ai
+			rsm, rop = sm, op
 		case codenames.BlueTeam:
-			bsm = ai
+			bsm, bop = sm, op
 		}
 	}
 
-	cards := make([]codenames.Card, len(words))
-	for i, w := range words {
-		c, err := parseCard(w)
-		if err != nil {
-			log.Fatalf("Failed on card #%d: %q: %v", i, w, err)
-		}
-		cards[i] = c
-	}
-	b := &codenames.Board{Cards: cards}
 	g, err := game.New(b, teamMap[*starter], &game.Config{
 		RedSpymaster:  rsm,
 		BlueSpymaster: bsm,

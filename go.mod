@@ -1,6 +1,8 @@
 module github.com/bcspragu/Codenames
 
-go 1.25
+go 1.24.0
+
+toolchain go1.24.2
 
 require (
 	cloud.google.com/go v0.80.0
@@ -9,7 +11,6 @@ require (
 	github.com/gorilla/mux v1.7.3
 	github.com/gorilla/securecookie v1.1.1
 	github.com/gorilla/websocket v1.4.1
-	github.com/namsral/flag v1.7.4-pre
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/peterbourgon/ff/v4 v4.0.0-beta.1
 	github.com/rs/cors v1.11.1

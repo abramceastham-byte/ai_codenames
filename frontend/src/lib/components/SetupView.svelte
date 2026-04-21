@@ -1,10 +1,28 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { gameStore } from '$lib/game.svelte';
 	import { Api } from '$lib/api';
 	import type { Team, Role, Player } from '$lib/types';
 
 	const { game, players, user } = $derived(gameStore);
 	const api = new Api();
+
+	let backends = $state<string[]>([]);
+	// Selected backend per "team:role" slot. Empty string means use server default.
+	let selectedBackend = $state<Record<string, string>>({});
+
+	onMount(async () => {
+		try {
+			const res = await api.getAIBackends();
+			backends = res.backends ?? [];
+		} catch (e) {
+			console.warn('Failed to fetch AI backends', e);
+		}
+	});
+
+	function slotKey(team: Team, role: Role): string {
+		return `${team}:${role}`;
+	}
 
 	function getPlayers(team: Team, role: Role): Player[] {
 		return players.filter((p) => p.team === team && p.role === role);
@@ -18,7 +36,7 @@
 
 	async function addAI(team: Team, role: Role) {
 		if (!game || !user || !gameStore.user) return;
-		await api.requestAI(game.id, team, role);
+		await api.requestAI(game.id, team, role, selectedBackend[slotKey(team, role)] ?? '');
 	}
 
 	async function startGame() {
@@ -82,6 +100,18 @@
 
 	{#snippet aiButton(team: Team, role: Role, classes: string)}
 		{#if isCreator}
+			{#if backends.length > 1}
+				<select
+					bind:value={selectedBackend[slotKey(team, role)]}
+					class="rounded-sm border border-gray-300 bg-white px-1 py-1 text-xs font-bold text-gray-700"
+					title="AI backend"
+				>
+					<option value="">default</option>
+					{#each backends as b (b)}
+						<option value={b}>{b}</option>
+					{/each}
+				</select>
+			{/if}
 			<button
 				onclick={() => addAI(team, role)}
 				class="{classes} rounded-sm px-2 py-1 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50"
@@ -172,14 +202,16 @@
 	</div>
 
 	<div class="mt-8 text-center text-gray-500">
-		{#if unassigned.length > 0}
-			{#if unassigned.length === 1}
-				<p>Waiting for role to be assigned to {unassigned[0].name}</p>
+		{#if canStart}
+			{#if unassigned.length > 0}
+				<p>
+					{unassigned.map((p) => p.name).join(', ')}
+					{unassigned.length === 1 ? 'will spectate' : 'will spectate'}. Waiting for {creatorName} to
+					start the game...
+				</p>
 			{:else}
-				<p>Waiting for roles to be assigned to {unassigned.map((p) => p.name).join(', ')}</p>
+				<p>Waiting for {creatorName} to start the game...</p>
 			{/if}
-		{:else if canStart}
-			<p>Waiting for {creatorName} to start the game...</p>
 		{:else if players.length < 4}
 			<p>Waiting for more players...</p>
 		{:else}

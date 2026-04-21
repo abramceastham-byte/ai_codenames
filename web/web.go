@@ -80,6 +80,12 @@ func (s *Srv) initMux() *mux.Router {
 			method:      http.MethodPost,
 			handlerFunc: s.serveCreateAI,
 		},
+		// List available AI backends.
+		{
+			path:        "/api/ai/backends",
+			method:      http.MethodGet,
+			handlerFunc: s.serveAIBackends,
+		},
 		// Edit a user
 		{
 			path:        "/api/user",
@@ -186,6 +192,23 @@ func (s *Srv) handleError(h handlerFunc) http.HandlerFunc {
 
 func (s *Srv) serveCreateAI(w http.ResponseWriter, r *http.Request) error {
 	return s.serveCreatePlayer(w, r, codenames.PlayerTypeRobot)
+}
+
+func (s *Srv) serveAIBackends(w http.ResponseWriter, r *http.Request) error {
+	if s.ai == nil {
+		return jsonResp(w, struct {
+			Backends []string `json:"backends"`
+			Default  string   `json:"default"`
+		}{[]string{}, ""})
+	}
+
+	bs, err := s.ai.Backends()
+	if err != nil {
+		return httperr.
+			Internal("failed to fetch AI backends: %w", err).
+			WithMessage("AI server is unavailable")
+	}
+	return jsonResp(w, bs)
 }
 
 func (s *Srv) serveCreateUser(w http.ResponseWriter, r *http.Request) error {
@@ -385,17 +408,20 @@ func (s *Srv) serveGame(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 
 func (s *Srv) serveRequestAI(w http.ResponseWriter, r *http.Request, creator *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
 	var req struct {
-		Team string `json:"team"`
-		Role string `json:"role"`
+		Team    string `json:"team"`
+		Role    string `json:"role"`
+		Backend string `json:"backend"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return httperr.BadRequest("failed to decode request AI request: %w", err)
 	}
 
-	robotID, err := s.ai.JoinGame(game.ID, req.Team, req.Role)
+	robotID, err := s.ai.JoinGame(game.ID, req.Team, req.Role, req.Backend)
 	if err != nil {
-		return httperr.Internal("failed to request an AI join game %q: %w", game.ID, err)
+		return httperr.
+			Internal("failed to request an AI join game %q: %w", game.ID, err).
+			WithMessage("AI server is unavailable, try again later")
 	}
 
 	return jsonResp(w, struct {
@@ -467,15 +493,20 @@ func (s *Srv) serveJoinGame(w http.ResponseWriter, r *http.Request, p *codenames
 
 func (s *Srv) serveAssignRole(w http.ResponseWriter, r *http.Request, creator *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
 	var req struct {
-		Team string `json:"team"`
-		Role string `json:"role"`
+		PlayerID codenames.PlayerID `json:"player_id"`
+		Team     string             `json:"team"`
+		Role     string             `json:"role"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return httperr.BadRequest("failed to decode assign role request: %w", err)
 	}
 
-	pID := userPR.PlayerID
+	// If no player_id is provided, default to the caller (self-assignment).
+	pID := req.PlayerID
+	if pID == (codenames.PlayerID{}) {
+		pID = userPR.PlayerID
+	}
 
 	desiredRole, ok := codenames.ToRole(req.Role)
 	if !ok {
@@ -595,14 +626,8 @@ func (s *Srv) serveStartGame(w http.ResponseWriter, r *http.Request, p *codename
 		}
 	}
 
-	// Now, check that we don't have any unassigned folks in the lobby.
-	for _, pr := range prs {
-		if !pr.RoleAssigned {
-			return httperr.
-				BadRequest("can't start game because player %+v hasn't been given a role", pr.PlayerID).
-				WithMessage("at least one player hasn't been assigned a role")
-		}
-	}
+	// Unassigned players are allowed — they become spectators and receive the
+	// operative-view broadcast (with hidden agent colors).
 
 	if err := codenames.AllRolesFilled(prs); err != nil {
 		return httperr.

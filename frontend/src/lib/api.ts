@@ -63,11 +63,16 @@ export class Api {
 		});
 	}
 
-	async requestAI(gameId: string, team: Team, role: Role): Promise<void> {
+	async requestAI(gameId: string, team: Team, role: Role, backend?: string): Promise<void> {
 		return this.post(`/api/game/${gameId}/requestAI`, {
 			team,
-			role
+			role,
+			backend: backend ?? ''
 		});
+	}
+
+	async getAIBackends(): Promise<{ backends: string[]; default: string }> {
+		return this.get('/api/ai/backends');
 	}
 
 	async startGame(

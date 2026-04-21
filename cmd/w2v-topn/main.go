@@ -14,7 +14,8 @@ import (
 
 func main() {
 	var (
-		modelFile = flag.String("model_file", "", "A binary-formatted word2vec pre-trained model file.")
+		modelFile      = flag.String("model_file", "", "A binary-formatted word2vec pre-trained model file (used as both GloVe and ConceptNet).")
+		commonWordlist = flag.String("common_wordlist", "common_words.txt", "Path to a common words file.")
 
 		wordList = flag.String("words", "", "Comma-separated list of words. Use --word_file to pass a file of words instead.")
 		wordFile = flag.String("word_file", "official.txt", "File with list of words (one word per line). Use --words to pass a list in manually instead.")
@@ -43,7 +44,7 @@ func main() {
 
 	}
 
-	ai, err := w2v.New(*modelFile, *modelFile)
+	ai, err := w2v.New(*modelFile, *modelFile, *commonWordlist)
 	if err != nil {
 		fmt.Printf("Failed to read in %s\n", *modelFile)
 	}

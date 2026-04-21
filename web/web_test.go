@@ -72,8 +72,10 @@ func TestBasicallyEverything(t *testing.T) {
 		}
 	}
 
-	// At first, we expect nobody in the game.
-	checkPlayers(nil)
+	// The creator (user_1) is auto-joined when creating the game.
+	checkPlayers([]*msgs.Player{
+		&msgs.Player{PlayerID: human("user_1"), Name: "Test1"},
+	})
 
 	// Have four players join that game.
 	for i := 0; i < 4; i++ {
@@ -81,9 +83,10 @@ func TestBasicallyEverything(t *testing.T) {
 	}
 
 	// Now, we expect everyone in, but nobody has a role.
+	// user_1 is first because createGame auto-joins the creator.
 	checkPlayers([]*msgs.Player{
-		&msgs.Player{PlayerID: human("user_0"), Name: "Test0"},
 		&msgs.Player{PlayerID: human("user_1"), Name: "Test1"},
+		&msgs.Player{PlayerID: human("user_0"), Name: "Test0"},
 		&msgs.Player{PlayerID: human("user_2"), Name: "Test2"},
 		&msgs.Player{PlayerID: human("user_3"), Name: "Test3"},
 	})
@@ -101,16 +104,16 @@ func TestBasicallyEverything(t *testing.T) {
 	// Now, we expect everyone has a role.
 	checkPlayers([]*msgs.Player{
 		&msgs.Player{
-			PlayerID: human("user_0"),
-			Name:     "Test0",
-			Role:     codenames.SpymasterRole,
-			Team:     codenames.BlueTeam,
-		},
-		&msgs.Player{
 			PlayerID: human("user_1"),
 			Name:     "Test1",
 			Role:     codenames.SpymasterRole,
 			Team:     codenames.RedTeam,
+		},
+		&msgs.Player{
+			PlayerID: human("user_0"),
+			Name:     "Test0",
+			Role:     codenames.SpymasterRole,
+			Team:     codenames.BlueTeam,
 		},
 		&msgs.Player{
 			PlayerID: human("user_2"),
@@ -286,7 +289,7 @@ func (env *testEnv) assignRole(t *testing.T, gID codenames.GameID, authIdx int, 
 	r = mux.SetURLVars(r, map[string]string{"id": string(gID)})
 	env.addAuth(r, authIdx)
 
-	handler := env.srv.requireGameAuth(env.srv.serveAssignRole, isGameCreator(), isGamePending())
+	handler := env.srv.requireGameAuth(env.srv.serveAssignRole, isGamePending())
 	if err := handler(w, r); err != nil {
 		t.Fatalf("failed to assign role: %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/bcspragu/Codenames/codenames"
 )
@@ -22,16 +23,17 @@ func New(secret, endpoint string) *Client {
 	return &Client{
 		secret:   secret,
 		endpoint: endpoint,
-		http:     http.DefaultClient,
+		http:     &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
-func (c *Client) JoinGame(gID codenames.GameID, team string, role string) (codenames.RobotID, error) {
+func (c *Client) JoinGame(gID codenames.GameID, team, role, backend string) (codenames.RobotID, error) {
 	body := struct {
-		GameID string `json:"game_id"`
-		Team   string `json:"team"`
-		Role   string `json:"role"`
-	}{string(gID), team, role}
+		GameID  string `json:"game_id"`
+		Team    string `json:"team"`
+		Role    string `json:"role"`
+		Backend string `json:"backend,omitempty"`
+	}{string(gID), team, role, backend}
 
 	endpoint := c.endpoint + "/join"
 	req, err := http.NewRequest(http.MethodPost, endpoint, toBody(body))
@@ -48,6 +50,25 @@ func (c *Client) JoinGame(gID codenames.GameID, team string, role string) (coden
 		return "", fmt.Errorf("failed to request AI join a game: %w", err)
 	}
 	return codenames.RobotID(resp.RobotID), nil
+}
+
+type Backends struct {
+	Backends []string `json:"backends"`
+	Default  string   `json:"default"`
+}
+
+func (c *Client) Backends() (*Backends, error) {
+	req, err := http.NewRequest(http.MethodGet, c.endpoint+"/backends", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to form request: %w", err)
+	}
+	req.Header.Set("Authorization", c.secret)
+
+	var resp Backends
+	if err := c.do(req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to fetch AI backends: %w", err)
+	}
+	return &resp, nil
 }
 
 func (c *Client) do(req *http.Request, resp any) error {
