@@ -1,0 +1,26 @@
+round,team,type,detail,result,model,duration_ms
+1,BLUE,clue,KING (2),,w2v,51818
+1,BLUE,guess,queen,blue,w2v,17
+1,BLUE,guess,hood,bystander,w2v,9
+1,RED,clue,FURNITURE (3),,llm,32047
+1,RED,guess,yard,blue,llm,14150
+2,BLUE,clue,ILLUMINATION (2),,w2v,19984
+2,BLUE,guess,light,blue,w2v,5
+2,BLUE,guess,genius,bystander,w2v,4
+2,RED,clue,WEAR (4),,llm,22064
+2,RED,guess,ring,bystander,llm,14454
+3,BLUE,clue,CORSAIR (3),,w2v,8922
+3,BLUE,guess,pirate,blue,w2v,17
+3,BLUE,guess,centaur,blue,w2v,17
+3,BLUE,guess,boot,red,w2v,7
+3,RED,clue,TIME (5),,llm,23172
+3,RED,guess,day,red,llm,13404
+3,RED,guess,bell,bystander,llm,1773
+4,BLUE,clue,VIALS (3),,w2v,2072
+4,BLUE,guess,bottle,blue,w2v,4
+4,BLUE,guess,compound,blue,w2v,11
+4,BLUE,guess,stock,blue,w2v,7
+4,RED,clue,FABRIC (4),,llm,28626
+4,RED,guess,tie,red,llm,17510
+4,RED,guess,amazon,red,llm,3014
+4,RED,guess,draft,assassin,llm,3767
