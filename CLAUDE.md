@@ -34,6 +34,8 @@ pnpm run format         # Auto-format
 
 ### Running Locally (3 terminals)
 
+First-time setup: `cd frontend && pnpm install` (skip on subsequent runs).
+
 ```bash
 # Terminal 1 — web server (port 8080)
 AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenames-server/
@@ -44,10 +46,17 @@ cd frontend && pnpm run dev
 # Terminal 3 — AI server (port 8081, requires model files)
 GLOVE_MODEL_PATH=data/glove.bin \
 CONCEPT_NET_MODEL_PATH=data/conceptnet.bin \
+COMMON_WORDLIST=data/common_words.txt \
 AUTH_SECRET=abc123 \
 WEB_SERVER_ENDPOINT=http://localhost:8080 \
+ENABLED_BACKENDS=w2v,llm \
+DEFAULT_BACKEND=w2v \
+OLLAMA_ENDPOINT=http://localhost:11434 \
+OLLAMA_MODEL=llama3 \
 go run ./cmd/ai-server/
 ```
+
+Then open `http://localhost:5173`. The `llm` backend requires [Ollama](https://ollama.com) running with the model pulled (e.g. `ollama pull llama3`); drop `llm` from `ENABLED_BACKENDS` if you only want the w2v player.
 
 ## Architecture
 
@@ -89,6 +98,10 @@ SvelteKit is configured as a fully static SPA (`adapter-static`, `fallback: '200
 | `GLOVE_MODEL_PATH` | AI server | GloVe Word2Vec binary |
 | `CONCEPT_NET_MODEL_PATH` | AI server | ConceptNet Word2Vec binary |
 | `COMMON_WORDLIST` | AI server | Common words file for operative guessing |
+| `ENABLED_BACKENDS` | AI server | Comma-separated backends to load (`w2v`, `llm`) |
+| `DEFAULT_BACKEND` | AI server | Backend used when caller doesn't specify |
+| `OLLAMA_ENDPOINT` | AI server | Ollama URL for the `llm` backend (default `http://localhost:11434`) |
+| `OLLAMA_MODEL` | AI server | Ollama model name for the `llm` backend (default `llama3`) |
 
 The web server also accepts `--addr` (default `:8080`), `--db_path` (default `codenames.db`), and `--hash_key_path`/`--block_key_path` for secure cookie keys (auto-generated if missing).
 

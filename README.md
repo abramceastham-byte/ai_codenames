@@ -23,6 +23,7 @@ AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenam
 
 # In another terminal, run the frontend. (You can also use `npm` or tool of your choice)
 cd frontend
+pnpm install   # first time only
 pnpm run dev
 
 # In a third terminal, run the AI server (only needed for AI games).
