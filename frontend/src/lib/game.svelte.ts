@@ -4,7 +4,12 @@ import {
 	type Team,
 	type WsMessage,
 	type PlayerVote,
-	type PlayerID
+	type PlayerID,
+	type LogEntry,
+	AGENT_RED,
+	AGENT_BLUE,
+	AGENT_BYSTANDER,
+	AGENT_ASSASSIN
 } from './types';
 import { Api } from '$lib/api';
 import { goto } from '$app/navigation';
@@ -24,6 +29,11 @@ export class GameStore {
 
 	// Vote tracking: Map of playerID -> player votes
 	votes = new SvelteMap<string, PlayerVote>();
+
+	// Game history log
+	history = $state<LogEntry[]>([]);
+	private _actionStartTime = 0;
+	private _teamClueCount: Record<string, number> = { RED: 0, BLUE: 0 };
 
 	// UI State
 	connected = $state(false);
@@ -108,28 +118,79 @@ export class GameStore {
 		switch (msg.action) {
 			case 'GAME_START':
 				if (msg.players) this.players = msg.players;
-				// Clear votes when game starts
 				this.votes.clear();
+				this.history = [];
+				this._teamClueCount = { RED: 0, BLUE: 0 };
+				this._actionStartTime = Date.now();
 				break;
 			case 'ROLE_ASSIGNED':
 				if (msg.players) this.players = msg.players;
 				break;
-			case 'CLUE_GIVEN':
+			case 'CLUE_GIVEN': {
+				const duration = Date.now() - this._actionStartTime;
 				if (msg.clue) {
 					this.lastClue = { ...msg.clue, team: msg.team };
 				}
+				this._teamClueCount[msg.team] = (this._teamClueCount[msg.team] ?? 0) + 1;
+				const clueRound = Math.max(this._teamClueCount['RED'] ?? 0, this._teamClueCount['BLUE'] ?? 0);
+				this.history = [
+					...this.history,
+					{
+						round: clueRound,
+						team: msg.team,
+						type: 'clue',
+						detail: `${msg.clue.word} (${msg.clue.count})`,
+						result: '',
+						model: this._modelForTeamRole(msg.team, 'SPYMASTER'),
+						durationMs: duration
+					}
+				];
+				this._actionStartTime = Date.now();
 				break;
-			case 'GUESS_GIVEN':
-				// Card update is handled by msg.game update above,
-				// Clear votes after a guess is confirmed
+			}
+			case 'GUESS_GIVEN': {
+				const duration = Date.now() - this._actionStartTime;
+				const round = Math.max(this._teamClueCount['RED'] ?? 0, this._teamClueCount['BLUE'] ?? 0);
+				this.history = [
+					...this.history,
+					{
+						round,
+						team: msg.team,
+						type: 'guess',
+						detail: msg.guess,
+						result: this._agentToResult(msg.card?.agent),
+						model: this._modelForTeamRole(msg.team, 'OPERATIVE'),
+						durationMs: duration
+					}
+				];
 				this.votes.clear();
+				this._actionStartTime = Date.now();
 				break;
+			}
 			case 'GAME_END':
-				// Show victory screen logic could go here
 				break;
 			case 'PLAYER_VOTE':
 				this.handlePlayerVote(msg);
 				break;
+		}
+	}
+
+	private _modelForTeamRole(team: Team, role: 'SPYMASTER' | 'OPERATIVE'): string {
+		const player = this.players.find((p) => p.team === team && p.role === role);
+		if (!player) return 'unknown';
+		const name = player.name.toUpperCase();
+		if (name.startsWith('W2V')) return 'w2v';
+		if (name.startsWith('LLM')) return 'llm';
+		return 'human';
+	}
+
+	private _agentToResult(agent: number | undefined): string {
+		switch (agent) {
+			case AGENT_RED: return 'red';
+			case AGENT_BLUE: return 'blue';
+			case AGENT_BYSTANDER: return 'bystander';
+			case AGENT_ASSASSIN: return 'assassin';
+			default: return '';
 		}
 	}
 

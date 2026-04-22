@@ -107,6 +107,16 @@ export interface PlayerVote {
 	guess: string;
 }
 
+export interface LogEntry {
+	round: number;
+	team: Team;
+	type: 'clue' | 'guess';
+	detail: string;
+	result: string; // 'red' | 'blue' | 'bystander' | 'assassin' | '' for clues
+	model: string;  // 'w2v' | 'llm' | 'human'
+	durationMs: number;
+}
+
 export type WsMessage =
 	| GameStartMsg
 	| RoleAssignedMsg

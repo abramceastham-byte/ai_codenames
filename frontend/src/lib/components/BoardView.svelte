@@ -4,6 +4,7 @@
 	import CardComponent from './Card.svelte';
 	import GameControls from './GameControls.svelte';
 	import GameInfo from './GameInfo.svelte';
+	import GameLog from './GameLog.svelte';
 	import type { Card, PlayerVote } from '$lib/types';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -77,6 +78,8 @@
 			{/each}
 		{/if}
 	</div>
+
+	<GameLog />
 
 	<div class="sticky bottom-4 mx-auto max-w-2xl">
 		{#if isGameOver}
