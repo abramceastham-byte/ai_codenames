@@ -427,17 +427,43 @@ func (s *Srv) serveGameLog(w http.ResponseWriter, r *http.Request, p *codenames.
 		return httperr.Internal("failed to create log dir: %w", err)
 	}
 
-	path := filepath.Join(s.logDir, fmt.Sprintf("game-%s.csv", game.ID))
-	f, err := os.Create(path)
+	combinedPath := filepath.Join(s.logDir, "all_games.csv")
+
+	// Count existing games in the combined file to determine this game's number.
+	gameNum := 1
+	if existing, err := os.Open(combinedPath); err == nil {
+		r2 := csv.NewReader(existing)
+		rows, _ := r2.ReadAll()
+		existing.Close()
+		seen := make(map[string]struct{})
+		for _, row := range rows[1:] { // skip header
+			if len(row) > 0 {
+				seen[row[0]] = struct{}{} // row[0] is game_num
+			}
+		}
+		gameNum = len(seen) + 1
+	}
+
+	// Append to combined file, writing header only if it doesn't exist yet.
+	needsHeader := false
+	if _, err := os.Stat(combinedPath); os.IsNotExist(err) {
+		needsHeader = true
+	}
+	f, err := os.OpenFile(combinedPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return httperr.Internal("failed to create log file: %w", err)
+		return httperr.Internal("failed to open combined log file: %w", err)
 	}
 	defer f.Close()
 
 	w2 := csv.NewWriter(f)
-	w2.Write([]string{"round", "team", "type", "detail", "result", "model", "duration_ms"})
+	if needsHeader {
+		w2.Write([]string{"game_num", "game_id", "round", "team", "type", "detail", "result", "model", "duration_ms"})
+	}
+	gameNumStr := strconv.Itoa(gameNum)
 	for _, e := range req.Entries {
 		w2.Write([]string{
+			gameNumStr,
+			string(game.ID),
 			strconv.Itoa(e.Round),
 			e.Team,
 			e.Type,
@@ -452,10 +478,11 @@ func (s *Srv) serveGameLog(w http.ResponseWriter, r *http.Request, p *codenames.
 		return httperr.Internal("failed to write CSV: %w", err)
 	}
 
-	log.Printf("Saved game log for %q to %s (%d entries)", game.ID, path, len(req.Entries))
+	log.Printf("Saved game log #%d (%q) to %s (%d entries)", gameNum, game.ID, combinedPath, len(req.Entries))
 	return jsonResp(w, struct {
-		Path string `json:"path"`
-	}{path})
+		Path    string `json:"path"`
+		GameNum int    `json:"game_num"`
+	}{combinedPath, gameNum})
 }
 
 func (s *Srv) serveGame(w http.ResponseWriter, r *http.Request, p *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
