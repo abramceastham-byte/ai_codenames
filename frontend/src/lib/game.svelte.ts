@@ -175,6 +175,11 @@ export class GameStore {
 			}
 			case 'GAME_END':
 				this.gameEndTime = Date.now();
+				if (this.game && this.history.length > 0) {
+					this.api.saveLog(this.game.id, this.history).catch((e) => {
+						console.warn('Failed to save game log:', e);
+					});
+				}
 				break;
 			case 'PLAYER_VOTE':
 				this.handlePlayerVote(msg);

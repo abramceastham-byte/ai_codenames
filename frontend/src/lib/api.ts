@@ -93,4 +93,8 @@ export class Api {
 	): Promise<{ success: boolean }> {
 		return this.post(`/api/game/${gameId}/guess`, { guess, confirmed });
 	}
+
+	async saveLog(gameId: string, entries: unknown[]): Promise<{ path: string }> {
+		return this.post(`/api/game/${gameId}/log`, { entries });
+	}
 }
