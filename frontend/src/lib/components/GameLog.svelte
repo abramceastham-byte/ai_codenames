@@ -25,12 +25,30 @@
 		if (ms < 1000) return `${ms}ms`;
 		return `${(ms / 1000).toFixed(1)}s`;
 	}
+
+	function downloadCSV() {
+		const rows = [
+			['round', 'team', 'type', 'detail', 'result', 'model', 'duration_ms'],
+			...history.map((e) => [e.round, e.team, e.type, e.detail, e.result, e.model, e.durationMs])
+		];
+		const csv = rows.map((r) => r.join(',')).join('\n');
+		const a = document.createElement('a');
+		a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+		a.download = 'game-log.csv';
+		a.click();
+	}
 </script>
 
 {#if history.length > 0}
 <div class="mt-6 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-	<div class="px-4 py-3 border-b border-gray-100 bg-gray-50">
+	<div class="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
 		<h3 class="text-sm font-semibold text-gray-700">Game Log</h3>
+		<button
+			onclick={downloadCSV}
+			class="rounded bg-gray-200 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-300"
+		>
+			Download CSV
+		</button>
 	</div>
 	<div class="overflow-x-auto">
 		<table class="w-full text-sm">

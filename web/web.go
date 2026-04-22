@@ -2,11 +2,15 @@
 package web
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/bcspragu/Codenames/aiclient"
@@ -35,10 +39,11 @@ type Srv struct {
 	ws        *websocket.Upgrader
 	consensus *consensus.Guesser
 	ai        *aiclient.Client
+	logDir    string
 }
 
 // New returns an initialized server.
-func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aiclient.Client) *Srv {
+func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aiclient.Client, logDir string) *Srv {
 	s := &Srv{
 		sc:  sc,
 		hub: hub.New(),
@@ -51,6 +56,7 @@ func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aicli
 		},
 		consensus: consensus.New(),
 		ai:        ai,
+		logDir:    logDir,
 	}
 
 	s.mux = s.initMux()
@@ -163,6 +169,12 @@ func (s *Srv) initMux() *mux.Router {
 			path:        "/api/game/{id}/ws",
 			method:      http.MethodGet,
 			handlerFunc: s.requireGameAuth(s.serveData),
+		},
+		// Save game log to disk.
+		{
+			path:        "/api/game/{id}/log",
+			method:      http.MethodPost,
+			handlerFunc: s.requireGameAuth(s.serveGameLog),
 		},
 	}
 
@@ -393,6 +405,57 @@ func (s *Srv) servePendingGames(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	return jsonResp(w, gIDs)
+}
+
+func (s *Srv) serveGameLog(w http.ResponseWriter, r *http.Request, p *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
+	var req struct {
+		Entries []struct {
+			Round      int     `json:"round"`
+			Team       string  `json:"team"`
+			Type       string  `json:"type"`
+			Detail     string  `json:"detail"`
+			Result     string  `json:"result"`
+			Model      string  `json:"model"`
+			DurationMs float64 `json:"durationMs"`
+		} `json:"entries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return httperr.BadRequest("failed to decode log request: %w", err)
+	}
+
+	if err := os.MkdirAll(s.logDir, 0755); err != nil {
+		return httperr.Internal("failed to create log dir: %w", err)
+	}
+
+	path := filepath.Join(s.logDir, fmt.Sprintf("game-%s.csv", game.ID))
+	f, err := os.Create(path)
+	if err != nil {
+		return httperr.Internal("failed to create log file: %w", err)
+	}
+	defer f.Close()
+
+	w2 := csv.NewWriter(f)
+	w2.Write([]string{"round", "team", "type", "detail", "result", "model", "duration_ms"})
+	for _, e := range req.Entries {
+		w2.Write([]string{
+			strconv.Itoa(e.Round),
+			e.Team,
+			e.Type,
+			e.Detail,
+			e.Result,
+			e.Model,
+			strconv.FormatFloat(e.DurationMs, 'f', 0, 64),
+		})
+	}
+	w2.Flush()
+	if err := w2.Error(); err != nil {
+		return httperr.Internal("failed to write CSV: %w", err)
+	}
+
+	log.Printf("Saved game log for %q to %s (%d entries)", game.ID, path, len(req.Entries))
+	return jsonResp(w, struct {
+		Path string `json:"path"`
+	}{path})
 }
 
 func (s *Srv) serveGame(w http.ResponseWriter, r *http.Request, p *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
