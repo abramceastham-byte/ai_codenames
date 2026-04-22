@@ -35,6 +35,10 @@ export class GameStore {
 	private _actionStartTime = 0;
 	private _teamClueCount: Record<string, number> = { RED: 0, BLUE: 0 };
 
+	// Game timer
+	gameStartTime = $state<number | null>(null);
+	gameEndTime = $state<number | null>(null);
+
 	// UI State
 	connected = $state(false);
 	error = $state<string | null>(null);
@@ -122,6 +126,8 @@ export class GameStore {
 				this.history = [];
 				this._teamClueCount = { RED: 0, BLUE: 0 };
 				this._actionStartTime = Date.now();
+				this.gameStartTime = Date.now();
+				this.gameEndTime = null;
 				break;
 			case 'ROLE_ASSIGNED':
 				if (msg.players) this.players = msg.players;
@@ -168,6 +174,7 @@ export class GameStore {
 				break;
 			}
 			case 'GAME_END':
+				this.gameEndTime = Date.now();
 				break;
 			case 'PLAYER_VOTE':
 				this.handlePlayerVote(msg);
