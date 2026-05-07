@@ -94,3 +94,45 @@ func (ge *GameEnd) MarshalJSON() ([]byte, error) {
 		Action string `json:"action"`
 	}{jsonGameEnd(*ge), "GAME_END"})
 }
+
+type jsonBothCluesRevealed BothCluesRevealed
+type BothCluesRevealed struct {
+	RedClue  *codenames.Clue `json:"red_clue"`
+	BlueClue *codenames.Clue `json:"blue_clue"`
+	Game     *codenames.Game `json:"game"`
+}
+
+func (b *BothCluesRevealed) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		jsonBothCluesRevealed
+		Action string `json:"action"`
+	}{jsonBothCluesRevealed(*b), "BOTH_CLUES_REVEALED"})
+}
+
+type jsonTuringVoteCast TuringVoteCast
+type TuringVoteCast struct {
+	PlayerID        codenames.PlayerID `json:"player_id"`
+	SuspectedAITeam codenames.Team     `json:"suspected_ai_team"`
+}
+
+func (t *TuringVoteCast) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		jsonTuringVoteCast
+		Action string `json:"action"`
+	}{jsonTuringVoteCast(*t), "TURING_VOTE_CAST"})
+}
+
+type jsonTuringResult TuringResult
+type TuringResult struct {
+	ActualAITeam  codenames.Team  `json:"actual_ai_team"`
+	VotesRedIsAI  int             `json:"votes_red_is_ai"`
+	VotesBlueIsAI int             `json:"votes_blue_is_ai"`
+	Game          *codenames.Game `json:"game"`
+}
+
+func (t *TuringResult) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		jsonTuringResult
+		Action string `json:"action"`
+	}{jsonTuringResult(*t), "TURING_RESULT"})
+}

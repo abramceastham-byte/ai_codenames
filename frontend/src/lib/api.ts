@@ -36,8 +36,8 @@ export class Api {
 		return this.get('/api/user');
 	}
 
-	async createGame(privateGame: boolean): Promise<{ id: string }> {
-		return this.post('/api/game', { private: privateGame });
+	async createGame(privateGame: boolean, gameMode: string = 'STANDARD'): Promise<{ id: string }> {
+		return this.post('/api/game', { private: privateGame, game_mode: gameMode });
 	}
 
 	async getPendingGames(): Promise<string[]> {
@@ -96,5 +96,13 @@ export class Api {
 
 	async saveLog(gameId: string, entries: unknown[]): Promise<{ path: string }> {
 		return this.post(`/api/game/${gameId}/log`, { entries });
+	}
+
+	async sendTuringVote(gameId: string, suspectedAITeam: string): Promise<{ success: boolean }> {
+		return this.post(`/api/game/${gameId}/turingVote`, { suspected_ai_team: suspectedAITeam });
+	}
+
+	async revealTuringResult(gameId: string): Promise<{ success: boolean }> {
+		return this.post(`/api/game/${gameId}/turingResult`, {});
 	}
 }

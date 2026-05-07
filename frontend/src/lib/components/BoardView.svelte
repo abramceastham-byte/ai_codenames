@@ -37,6 +37,8 @@
 	}
 
 	const isGameOver = $derived(game?.status === 'FINISHED');
+	const isTuring = $derived(game?.state.game_mode === 'TURING');
+	const turingResult = $derived(gameStore.turingResult);
 
 	const redWon = $derived(game?.state.winning_team === 'RED');
 	const blueWon = $derived(game?.state.winning_team === 'BLUE');
@@ -82,14 +84,32 @@
 	<GameLog />
 
 	<div class="sticky bottom-4 mx-auto max-w-2xl">
-		{#if isGameOver}
+		{#if isGameOver && isTuring && turingResult}
+			<div class="rounded-lg bg-stone-800 p-6 text-center text-white shadow-xl">
+				<h2 class="mb-3 text-2xl font-bold">Turing Test Result</h2>
+				<p class="mb-1 text-lg">
+					The AI was the <span class:text-red-400={turingResult.actualAITeam === 'RED'} class:text-blue-400={turingResult.actualAITeam === 'BLUE'} class="font-bold">
+						{turingResult.actualAITeam || 'Unknown'}
+					</span> spymaster.
+				</p>
+				<div class="mt-2 flex justify-center gap-8 text-sm text-gray-300">
+					<span>Votes RED is AI: <strong class="text-red-400">{turingResult.votesRedIsAI}</strong></span>
+					<span>Votes BLUE is AI: <strong class="text-blue-400">{turingResult.votesBlueIsAI}</strong></span>
+				</div>
+				<button
+					onclick={() => goto(resolve('/'))}
+					class="mt-4 rounded bg-white px-6 py-2 font-bold text-stone-900 hover:bg-gray-200"
+				>
+					Back to Lobby
+				</button>
+			</div>
+		{:else if isGameOver}
 			<div class="rounded-lg bg-stone-800 p-6 text-center text-white shadow-xl">
 				<h2 class="mb-2 text-3xl font-bold">
 					Game over, <span class:text-red-600={redWon} class:text-blue-600={blueWon}>
 						{game?.state.winning_team} wins!</span
 					>
 				</h2>
-				<!-- We assume winning team is handled elsewhere or inferable, but for now simple message -->
 				<button
 					onclick={() => goto(resolve('/'))}
 					class="mt-4 rounded bg-white px-6 py-2 font-bold text-stone-900 hover:bg-gray-200"

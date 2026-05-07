@@ -11,13 +11,14 @@
 	const api = new Api();
 
 	let privateGame = $state(false);
+	let turingMode = $state(false);
 	let joinId = $state('');
 	let loading = $state(false);
 
 	async function createGame() {
 		loading = true;
 		try {
-			const res = await api.createGame(privateGame);
+			const res = await api.createGame(privateGame, turingMode ? 'TURING' : 'STANDARD');
 			await goto(resolve(`/game/${res.id}`));
 		} catch (e) {
 			alert('Failed to create game: ' + e);
@@ -93,10 +94,17 @@
 			<div class="rounded-lg bg-white p-6 shadow">
 				<h2 class="mb-4 text-xl font-semibold text-gray-800">New Game</h2>
 				<p class="mb-4 text-gray-600">Start a new match</p>
-				<div class="my-2">
-					<input name="private" type="checkbox" bind:checked={privateGame} />
+				<div class="my-2 flex items-center gap-2">
+					<input id="private" name="private" type="checkbox" bind:checked={privateGame} />
 					<label for="private">Private?</label>
 				</div>
+				<div class="my-2 flex items-center gap-2">
+					<input id="turing" name="turing" type="checkbox" bind:checked={turingMode} />
+					<label for="turing" class="font-medium">Turing Test Mode</label>
+				</div>
+				{#if turingMode}
+					<p class="mb-2 text-xs text-gray-500">Both spymasters give clues simultaneously. Operatives guess, then vote on which spymaster was AI.</p>
+				{/if}
 				<button
 					onclick={createGame}
 					disabled={loading}

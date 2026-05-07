@@ -1,5 +1,7 @@
 export type Team = 'RED' | 'BLUE' | '';
 export type Role = 'SPYMASTER' | 'OPERATIVE' | '';
+export type GameMode = 'STANDARD' | 'TURING' | '';
+export type TuringPhase = 'CLUE' | 'GUESS_RED' | 'GUESS_BLUE' | 'VOTE' | '';
 export type Agent = number; // 0=Unknown, 1=Red, 2=Blue, 3=Bystander, 4=Assassin
 
 // Constants for Agent types to make code readable
@@ -40,6 +42,8 @@ export interface GameState {
 	num_guesses_left: number;
 	starting_team: Team;
 	winning_team: Team;
+	game_mode: GameMode;
+	turing_phase: TuringPhase;
 }
 
 export interface SpymasterClue {
@@ -117,10 +121,40 @@ export interface LogEntry {
 	durationMs: number;
 }
 
+export interface BothCluesRevealedMsg {
+	action: 'BOTH_CLUES_REVEALED';
+	red_clue: Clue | null;
+	blue_clue: Clue | null;
+	game: Game;
+}
+
+export interface TuringVoteCastMsg {
+	action: 'TURING_VOTE_CAST';
+	player_id: PlayerID;
+	suspected_ai_team: Team;
+}
+
+export interface TuringResultMsg {
+	action: 'TURING_RESULT';
+	actual_ai_team: Team;
+	votes_red_is_ai: number;
+	votes_blue_is_ai: number;
+	game: Game;
+}
+
+export interface TuringVote {
+	playerId: PlayerID;
+	playerName: string;
+	suspectedAITeam: Team;
+}
+
 export type WsMessage =
 	| GameStartMsg
 	| RoleAssignedMsg
 	| ClueGivenMsg
 	| GuessGivenMsg
 	| GameEndMsg
-	| PlayerVoteMsg;
+	| PlayerVoteMsg
+	| BothCluesRevealedMsg
+	| TuringVoteCastMsg
+	| TuringResultMsg;

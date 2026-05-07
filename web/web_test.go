@@ -53,6 +53,7 @@ func TestBasicallyEverything(t *testing.T) {
 			Board:        &codenames.Board{Cards: startingBoardCards()},
 			StartingTeam: codenames.BlueTeam,
 			Clues:        []codenames.SpymasterClue{},
+			GameMode:     codenames.StandardMode,
 		},
 	}
 	if diff := cmp.Diff(wantGame, gotGame); diff != "" {
@@ -345,6 +346,7 @@ func setup() *testEnv {
 			rand.New(rand.NewSource(0)),
 			setupCookies(),
 			nil, /* AI client, not used yet */
+			"",  /* log dir */
 		),
 	}
 }

@@ -96,6 +96,22 @@ const (
 	Finished = GameStatus("FINISHED")
 )
 
+type GameMode string
+
+const (
+	StandardMode = GameMode("STANDARD")
+	TuringMode   = GameMode("TURING")
+)
+
+type TuringPhase string
+
+const (
+	TuringCluePhase     = TuringPhase("CLUE")
+	TuringGuessRedPhase = TuringPhase("GUESS_RED")
+	TuringGuessBluPhase = TuringPhase("GUESS_BLUE")
+	TuringVotePhase     = TuringPhase("VOTE")
+)
+
 type Role string
 
 const (
@@ -194,6 +210,9 @@ type GameState struct {
 	NumGuessesLeft int             `json:"num_guesses_left"`
 	StartingTeam   Team            `json:"starting_team"`
 	Clues          []SpymasterClue `json:"clues"`
+	GameMode       GameMode        `json:"game_mode"`
+	TuringPhase    TuringPhase     `json:"turing_phase"`
+	PendingClues   map[Team]*Clue  `json:"pending_clues,omitempty"`
 }
 
 func (gs *GameState) MarshalJSON() ([]byte, error) {
@@ -253,6 +272,15 @@ func (gs *GameState) Clone() *GameState {
 	clues := make([]SpymasterClue, len(gs.Clues))
 	copy(clues, gs.Clues)
 
+	var pendingClues map[Team]*Clue
+	if len(gs.PendingClues) > 0 {
+		pendingClues = make(map[Team]*Clue, len(gs.PendingClues))
+		for k, v := range gs.PendingClues {
+			c := *v
+			pendingClues[k] = &c
+		}
+	}
+
 	return &GameState{
 		ActiveTeam:     gs.ActiveTeam,
 		ActiveRole:     gs.ActiveRole,
@@ -260,6 +288,9 @@ func (gs *GameState) Clone() *GameState {
 		NumGuessesLeft: gs.NumGuessesLeft,
 		StartingTeam:   gs.StartingTeam,
 		Clues:          clues,
+		GameMode:       gs.GameMode,
+		TuringPhase:    gs.TuringPhase,
+		PendingClues:   pendingClues,
 	}
 }
 
@@ -325,6 +356,35 @@ func AllRolesFilled(prs []*PlayerRole) error {
 		if count(t, OperativeRole) == 0 {
 			return fmt.Errorf("team %q had no operatives", t)
 		}
+	}
+	return nil
+}
+
+func AllRolesFilledTuring(prs []*PlayerRole) error {
+	var redSM, blueSM, ops int
+	for _, pr := range prs {
+		if !pr.RoleAssigned {
+			continue
+		}
+		switch pr.Role {
+		case SpymasterRole:
+			if pr.Team == RedTeam {
+				redSM++
+			} else if pr.Team == BlueTeam {
+				blueSM++
+			}
+		case OperativeRole:
+			ops++
+		}
+	}
+	if redSM != 1 {
+		return fmt.Errorf("need exactly one RED spymaster, have %d", redSM)
+	}
+	if blueSM != 1 {
+		return fmt.Errorf("need exactly one BLUE spymaster, have %d", blueSM)
+	}
+	if ops == 0 {
+		return fmt.Errorf("need at least one operative")
 	}
 	return nil
 }

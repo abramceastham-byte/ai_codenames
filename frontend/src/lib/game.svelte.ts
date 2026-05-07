@@ -4,6 +4,7 @@ import {
 	type Team,
 	type WsMessage,
 	type PlayerVote,
+	type TuringVote,
 	type PlayerID,
 	type LogEntry,
 	AGENT_RED,
@@ -29,6 +30,13 @@ export class GameStore {
 
 	// Vote tracking: Map of playerID -> player votes
 	votes = new SvelteMap<string, PlayerVote>();
+
+	// Turing test state
+	turingClueSubmitted = $state(false);
+	turingVoteSubmitted = $state(false);
+	turingVotes = new SvelteMap<string, TuringVote>();
+	turingResult = $state<{ actualAITeam: Team; votesRedIsAI: number; votesBlueIsAI: number } | null>(null);
+	turingClueDeadline = $state<number | null>(null); // epoch ms when clues reveal
 
 	// Game history log
 	history = $state<LogEntry[]>([]);
@@ -128,6 +136,11 @@ export class GameStore {
 				this._actionStartTime = Date.now();
 				this.gameStartTime = Date.now();
 				this.gameEndTime = null;
+				this.turingClueSubmitted = false;
+				this.turingVoteSubmitted = false;
+				this.turingVotes.clear();
+				this.turingResult = null;
+				this.turingClueDeadline = null;
 				break;
 			case 'ROLE_ASSIGNED':
 				if (msg.players) this.players = msg.players;
@@ -184,6 +197,29 @@ export class GameStore {
 			case 'PLAYER_VOTE':
 				this.handlePlayerVote(msg);
 				break;
+			case 'BOTH_CLUES_REVEALED':
+				// game state updated at top of handleMessage; start reveal timer was server-side
+				this.turingClueDeadline = null;
+				break;
+			case 'TURING_VOTE_CAST': {
+				const voter = this.players.find((p) => p.player_id.id === msg.player_id.id);
+				if (voter) {
+					this.turingVotes.set(voter.player_id.id, {
+						playerId: msg.player_id,
+						playerName: voter.name,
+						suspectedAITeam: msg.suspected_ai_team
+					});
+				}
+				break;
+			}
+			case 'TURING_RESULT':
+				this.turingResult = {
+					actualAITeam: msg.actual_ai_team,
+					votesRedIsAI: msg.votes_red_is_ai,
+					votesBlueIsAI: msg.votes_blue_is_ai
+				};
+				this.gameEndTime = Date.now();
+				break;
 		}
 	}
 
@@ -227,6 +263,21 @@ export class GameStore {
 		if (!this.game || !this.myPlayer) return false;
 		const s = this.game.state;
 		const p = this.myPlayer;
+
+		if (s.game_mode === 'TURING') {
+			switch (s.turing_phase) {
+				case 'CLUE':
+					return p.role === 'SPYMASTER' && !this.turingClueSubmitted;
+				case 'GUESS_RED':
+				case 'GUESS_BLUE':
+					return p.role === 'OPERATIVE';
+				case 'VOTE':
+					return p.role === 'OPERATIVE' && !this.turingVoteSubmitted;
+				default:
+					return false;
+			}
+		}
+
 		return s.active_team === p.team && s.active_role === p.role;
 	}
 }

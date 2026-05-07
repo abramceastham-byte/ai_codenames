@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/bcspragu/Codenames/aiclient"
 	"github.com/bcspragu/Codenames/boardgen"
@@ -27,19 +29,28 @@ import (
 )
 
 const (
-	maxOperativesPerTeam = 10
+	maxOperativesPerTeam  = 10
+	maxTuringOperatives   = 20
+	turingClueWindowSecs  = 60
 )
 
+type turingVoteMap struct {
+	mu    sync.Mutex
+	votes map[string]codenames.Team
+}
+
 type Srv struct {
-	sc        *securecookie.SecureCookie
-	hub       *hub.Hub
-	mux       *mux.Router
-	db        codenames.DB
-	r         *rand.Rand
-	ws        *websocket.Upgrader
-	consensus *consensus.Guesser
-	ai        *aiclient.Client
-	logDir    string
+	sc           *securecookie.SecureCookie
+	hub          *hub.Hub
+	mux          *mux.Router
+	db           codenames.DB
+	r            *rand.Rand
+	ws           *websocket.Upgrader
+	consensus    *consensus.Guesser
+	ai           *aiclient.Client
+	logDir       string
+	turingTimers sync.Map // codenames.GameID -> *time.Timer
+	turingVotes  sync.Map // codenames.GameID -> *turingVoteMap
 }
 
 // New returns an initialized server.
@@ -175,6 +186,18 @@ func (s *Srv) initMux() *mux.Router {
 			path:        "/api/game/{id}/log",
 			method:      http.MethodPost,
 			handlerFunc: s.requireGameAuth(s.serveGameLog),
+		},
+		// Submit a turing test vote (which spymaster is AI).
+		{
+			path:        "/api/game/{id}/turingVote",
+			method:      http.MethodPost,
+			handlerFunc: s.requireGameAuth(s.serveTuringVote, isGamePlaying()),
+		},
+		// Reveal turing test result (game creator only).
+		{
+			path:        "/api/game/{id}/turingResult",
+			method:      http.MethodPost,
+			handlerFunc: s.requireGameAuth(s.serveTuringResult, isGameCreator(), isGamePlaying()),
 		},
 	}
 
@@ -353,7 +376,8 @@ func (s *Srv) serveCreateGame(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var req struct {
-		Private bool `json:"private"`
+		Private  bool   `json:"private"`
+		GameMode string `json:"game_mode"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -367,9 +391,19 @@ func (s *Srv) serveCreateGame(w http.ResponseWriter, r *http.Request) error {
 			WithMessage("only users can create games")
 	}
 
+	gameMode := codenames.StandardMode
+	if req.GameMode == string(codenames.TuringMode) {
+		gameMode = codenames.TuringMode
+	}
+
 	ar := codenames.RedTeam
 	if s.r.Intn(2) == 0 {
 		ar = codenames.BlueTeam
+	}
+
+	turingPhase := codenames.TuringPhase("")
+	if gameMode == codenames.TuringMode {
+		turingPhase = codenames.TuringCluePhase
 	}
 
 	id, err := s.db.NewGame(&codenames.Game{
@@ -379,6 +413,8 @@ func (s *Srv) serveCreateGame(w http.ResponseWriter, r *http.Request) error {
 			ActiveTeam:   ar,
 			ActiveRole:   codenames.SpymasterRole,
 			Board:        boardgen.New(ar, s.r),
+			GameMode:     gameMode,
+			TuringPhase:  turingPhase,
 		},
 	}, req.Private)
 	if err != nil {
@@ -605,14 +641,22 @@ func (s *Srv) serveAssignRole(w http.ResponseWriter, r *http.Request, creator *c
 			WithMessage("bad role")
 	}
 
-	desiredTeam, ok := codenames.ToTeam(req.Team)
-	if !ok {
-		return httperr.
-			BadRequest("unknown team %q given", req.Team).
-			WithMessage("bad team")
+	isTuring := game.State.GameMode == codenames.TuringMode
+	var desiredTeam codenames.Team
+	if isTuring && desiredRole == codenames.OperativeRole {
+		desiredTeam = codenames.NoTeam
+	} else {
+		var ok bool
+		desiredTeam, ok = codenames.ToTeam(req.Team)
+		if !ok {
+			return httperr.
+				BadRequest("unknown team %q given", req.Team).
+				WithMessage("bad team")
+		}
 	}
 
 	roleCount := make(map[codenames.Role]map[codenames.Team]int)
+	totalOperatives := 0
 	for _, pr := range prs {
 		if !pr.RoleAssigned {
 			continue
@@ -622,21 +666,18 @@ func (s *Srv) serveAssignRole(w http.ResponseWriter, r *http.Request, creator *c
 		if !ok {
 			rc = make(map[codenames.Team]int)
 		}
-		// Allow players to change roles
-		// if pr.PlayerID == pID {
-		// 	return httperr.
-		// 		BadRequest("player %q tried to join game %q as %q %q, already joined as %q %q", pID, game.ID, desiredTeam, desiredRole, pr.Team, pr.Role).
-		// 		WithMessage(fmt.Sprintf("can't join game as %q %q, already joined as %q %q", desiredTeam, desiredRole, pr.Team, pr.Role))
-		// }
 		if pr.Role == codenames.SpymasterRole && rc[pr.Team] > 1 {
 			return httperr.
 				Internal("game %q in bad state, team %q has multiple spymaster", game.ID, pr.Team).
 				WithMessage(fmt.Sprintf("multiple players set as %q spymaster", pr.Team))
 		}
-		if pr.Role == codenames.OperativeRole && rc[pr.Team] > maxOperativesPerTeam {
-			return httperr.
-				Internal("game %q in bad state, has too many players as %q operatives", game.ID, pr.Team).
-				WithMessage(fmt.Sprintf("too many players set as %q operatives", pr.Team))
+		if pr.Role == codenames.OperativeRole {
+			totalOperatives++
+			if !isTuring && rc[pr.Team] > maxOperativesPerTeam {
+				return httperr.
+					Internal("game %q in bad state, has too many players as %q operatives", game.ID, pr.Team).
+					WithMessage(fmt.Sprintf("too many players set as %q operatives", pr.Team))
+			}
 		}
 		rc[pr.Team]++
 		roleCount[pr.Role] = rc
@@ -647,10 +688,17 @@ func (s *Srv) serveAssignRole(w http.ResponseWriter, r *http.Request, creator *c
 			BadRequest("player %q wanted to be %q spymaster, but that role is already filled in game %q", pID, desiredTeam, game.ID).
 			WithMessage(fmt.Sprintf("team %q already has a spymaster", desiredTeam))
 	}
-	if desiredRole == codenames.OperativeRole && roleCount[codenames.OperativeRole][desiredTeam] >= maxOperativesPerTeam {
-		return httperr.
-			BadRequest("player %q wanted to be a %q operative, but that team already has the max number of operatives in game %q", pID, desiredTeam, game.ID).
-			WithMessage(fmt.Sprintf("team %q already has max operatives", desiredTeam))
+	if desiredRole == codenames.OperativeRole {
+		if isTuring && totalOperatives >= maxTuringOperatives {
+			return httperr.
+				BadRequest("game %q already has the max number of operatives", game.ID).
+				WithMessage("game already has max operatives")
+		}
+		if !isTuring && roleCount[codenames.OperativeRole][desiredTeam] >= maxOperativesPerTeam {
+			return httperr.
+				BadRequest("player %q wanted to be a %q operative, but that team already has the max number of operatives in game %q", pID, desiredTeam, game.ID).
+				WithMessage(fmt.Sprintf("team %q already has max operatives", desiredTeam))
+		}
 	}
 
 	if err := s.db.AssignRole(game.ID, &codenames.PlayerRole{
@@ -719,10 +767,16 @@ func (s *Srv) serveStartGame(w http.ResponseWriter, r *http.Request, p *codename
 	// Unassigned players are allowed — they become spectators and receive the
 	// operative-view broadcast (with hidden agent colors).
 
-	if err := codenames.AllRolesFilled(prs); err != nil {
+	var rolesErr error
+	if game.State.GameMode == codenames.TuringMode {
+		rolesErr = codenames.AllRolesFilledTuring(prs)
+	} else {
+		rolesErr = codenames.AllRolesFilled(prs)
+	}
+	if rolesErr != nil {
 		return httperr.
-			BadRequest("user %q tried to start game %q, but not all roles are filled: %w", p.ID, game.ID, err).
-			WithMessage(fmt.Sprintf("can't start game yet: %v", err))
+			BadRequest("user %q tried to start game %q, but not all roles are filled: %w", p.ID, game.ID, rolesErr).
+			WithMessage(fmt.Sprintf("can't start game yet: %v", rolesErr))
 	}
 
 	// If we're here, all the right roles are filled, the game is pending, and
@@ -758,10 +812,15 @@ func (s *Srv) serveStartGame(w http.ResponseWriter, r *http.Request, p *codename
 }
 
 func (s *Srv) finishAssigningRoles(game *codenames.Game, prs []*codenames.PlayerRole) (bool, error) {
-	if len(prs) < 4 {
+	isTuring := game.State.GameMode == codenames.TuringMode
+	minPlayers := 4
+	if isTuring {
+		minPlayers = 3
+	}
+	if len(prs) < minPlayers {
 		return false, httperr.
-			BadRequest("only have %d players, need four to start a game", len(prs)).
-			WithMessage("you need at least four players to start")
+			BadRequest("only have %d players, need %d to start a game", len(prs), minPlayers).
+			WithMessage(fmt.Sprintf("you need at least %d players to start", minPlayers))
 	}
 
 	// Start by marking both spymaster positions available.
@@ -822,11 +881,14 @@ func (s *Srv) finishAssigningRoles(game *codenames.Game, prs []*codenames.Player
 			continue
 		}
 
-		// If there are no spymaster positions open, pick an operative team and
-		// assign them.
-		team := codenames.RedTeam
-		if i%2 == 1 {
-			team = codenames.BlueTeam
+		// If there are no spymaster positions open, assign as operative.
+		// Turing mode operatives have no team; standard mode alternates teams.
+		team := codenames.NoTeam
+		if !isTuring {
+			team = codenames.RedTeam
+			if i%2 == 1 {
+				team = codenames.BlueTeam
+			}
 		}
 
 		if err := s.db.AssignRole(game.ID, &codenames.PlayerRole{
@@ -835,7 +897,7 @@ func (s *Srv) finishAssigningRoles(game *codenames.Game, prs []*codenames.Player
 			Role:     codenames.OperativeRole,
 		}); err != nil {
 			return false, httperr.
-				Internal("failed to assign %+v to %s operative: %w", pr.PlayerID, team, err).
+				Internal("failed to assign %+v to operative: %w", pr.PlayerID, err).
 				WithMessage("failed to randomly assign players")
 		}
 	}
@@ -872,6 +934,9 @@ func (s *Srv) toPlayers(prs []*codenames.PlayerRole) ([]*msgs.Player, error) {
 }
 
 func (s *Srv) broadcastMessage(game *codenames.Game, prs []*codenames.PlayerRole, fn func(*codenames.Game) any) error {
+	// Never reveal pending clues in any broadcast — they're hidden until the timer fires.
+	game.State.PendingClues = nil
+
 	// First, send the full board to the spymasters.
 	fullMsg := fn(game)
 	for _, pr := range prs {
@@ -915,21 +980,63 @@ func (s *Srv) serveClue(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 		Word:  strings.ToUpper(req.Word),
 		Count: req.Count,
 	}
-	// We don't need to check if the status changed/game is over, because giving
-	// a clue will never end the game.
+
+	// Turing mode: store clue as pending and start the 60s reveal timer.
+	if g.State.GameMode == codenames.TuringMode {
+		if userPR.Role != codenames.SpymasterRole {
+			return httperr.BadRequest("only spymasters can give clues in turing mode").
+				WithMessage("not a spymaster")
+		}
+		if g.State.TuringPhase != codenames.TuringCluePhase {
+			return httperr.BadRequest("not in the clue phase").
+				WithMessage("not time to give a clue")
+		}
+		if g.State.PendingClues != nil {
+			if _, already := g.State.PendingClues[userPR.Team]; already {
+				return httperr.BadRequest("already submitted a clue").
+					WithMessage("you already submitted your clue")
+			}
+		}
+		if g.State.PendingClues == nil {
+			g.State.PendingClues = make(map[codenames.Team]*codenames.Clue)
+		}
+		g.State.PendingClues[userPR.Team] = clue
+
+		if err := s.db.UpdateState(g.ID, g.State, g.Status); err != nil {
+			return httperr.
+				Internal("failed to update state for game %q: %w", g.ID, err).
+				WithMessage("failed to save clue")
+		}
+
+		// Start the 60-second reveal timer (idempotent: only the first call wins).
+		if _, loaded := s.turingTimers.Load(g.ID); !loaded {
+			gID := g.ID
+			timer := time.AfterFunc(turingClueWindowSecs*time.Second, func() {
+				s.turingTimers.Delete(gID)
+				s.revealTuringClues(gID)
+			})
+			if _, alreadyStored := s.turingTimers.LoadOrStore(g.ID, timer); alreadyStored {
+				timer.Stop()
+			}
+		}
+
+		return jsonResp(w, struct {
+			Success bool `json:"success"`
+		}{true})
+	}
+
+	// Standard mode: process clue immediately via game logic.
 	newState, newStatus, err := game.NewForMove(g.State).Move(&game.Move{
 		Action:   game.ActionGiveClue,
 		Team:     userPR.Team,
 		GiveClue: clue,
 	})
 	if err != nil {
-		// We assume the error is the result of a bad request.
 		return httperr.
 			BadRequest("player %q in game %q gave invalid clue: %w", p.ID, g.ID, err).
 			WithMessage(fmt.Sprintf("failed to make move: %v", err))
 	}
 
-	// Update the state in the database.
 	if err := s.db.UpdateState(g.ID, newState, newStatus); err != nil {
 		return httperr.
 			Internal("failed to update state for game %q: %w", g.ID, err).
@@ -938,7 +1045,6 @@ func (s *Srv) serveClue(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 	g.State = newState
 	g.Status = newStatus
 
-	// Send the clue down to everyone.
 	if err := s.broadcastMessage(g, prs, func(g *codenames.Game) any {
 		return &msgs.ClueGiven{
 			Clue: clue,
@@ -956,10 +1062,77 @@ func (s *Srv) serveClue(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 	}{true})
 }
 
+func (s *Srv) revealTuringClues(gID codenames.GameID) {
+	g, err := s.db.Game(gID)
+	if err != nil {
+		log.Printf("revealTuringClues: failed to load game %q: %v", gID, err)
+		return
+	}
+	if g.State.GameMode != codenames.TuringMode || g.State.TuringPhase != codenames.TuringCluePhase {
+		return // already revealed or wrong mode
+	}
+
+	prs, err := s.db.PlayersInGame(gID)
+	if err != nil {
+		log.Printf("revealTuringClues: failed to load players for game %q: %v", gID, err)
+		return
+	}
+
+	redClue := g.State.PendingClues[codenames.RedTeam]
+	blueClue := g.State.PendingClues[codenames.BlueTeam]
+
+	if redClue != nil {
+		g.State.Clues = append(g.State.Clues, codenames.SpymasterClue{Clue: *redClue, Team: codenames.RedTeam})
+	}
+	if blueClue != nil {
+		g.State.Clues = append(g.State.Clues, codenames.SpymasterClue{Clue: *blueClue, Team: codenames.BlueTeam})
+	}
+	g.State.PendingClues = nil
+
+	// Determine starting guess phase based on which clues were submitted.
+	if redClue != nil {
+		g.State.TuringPhase = codenames.TuringGuessRedPhase
+		g.State.ActiveTeam = codenames.RedTeam
+		g.State.ActiveRole = codenames.OperativeRole
+		g.State.NumGuessesLeft = redClue.Count
+		if g.State.NumGuessesLeft == 0 {
+			g.State.NumGuessesLeft = -1
+		}
+	} else if blueClue != nil {
+		g.State.TuringPhase = codenames.TuringGuessBluPhase
+		g.State.ActiveTeam = codenames.BlueTeam
+		g.State.ActiveRole = codenames.OperativeRole
+		g.State.NumGuessesLeft = blueClue.Count
+		if g.State.NumGuessesLeft == 0 {
+			g.State.NumGuessesLeft = -1
+		}
+	} else {
+		// No clues submitted — go straight to vote.
+		g.State.TuringPhase = codenames.TuringVotePhase
+	}
+
+	if err := s.db.UpdateState(gID, g.State, g.Status); err != nil {
+		log.Printf("revealTuringClues: failed to update state for game %q: %v", gID, err)
+		return
+	}
+
+	if err := s.broadcastMessage(g, prs, func(g *codenames.Game) any {
+		return &msgs.BothCluesRevealed{
+			RedClue:  redClue,
+			BlueClue: blueClue,
+			Game:     g,
+		}
+	}); err != nil {
+		log.Printf("revealTuringClues: failed to broadcast for game %q: %v", gID, err)
+	}
+}
+
 func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Player, g *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
+	isTuring := g.State.GameMode == codenames.TuringMode
+
 	// Since we record votes and calculate consensus before making the move, we
 	// need to independently validate moves first.
-	if userPR.Team != g.State.ActiveTeam {
+	if !isTuring && userPR.Team != g.State.ActiveTeam {
 		return httperr.
 			BadRequest("player %q of team %q tried to guess when %q %q was active in game %q", p.ID, userPR.Team, g.State.ActiveTeam, g.State.ActiveRole, g.ID).
 			WithMessage("it's not your team's turn")
@@ -1004,7 +1177,11 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 		}{true})
 	}
 
-	guess, hasConsensus := s.consensus.RecordVote(g.ID, p.ID, req.Guess, countVoters(prs, g.State.ActiveTeam))
+	voterCount := countVoters(prs, g.State.ActiveTeam)
+	if isTuring {
+		voterCount = countAllOperatives(prs)
+	}
+	guess, hasConsensus := s.consensus.RecordVote(g.ID, p.ID, req.Guess, voterCount)
 	if !hasConsensus {
 		return jsonResp(w, struct {
 			Success bool `json:"success"`
@@ -1024,15 +1201,45 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 
 	newState, newStatus, err := gfm.Move(&game.Move{
 		Action: game.ActionGuess,
-		Team:   userPR.Team,
+		Team:   g.State.ActiveTeam,
 		Guess:  guess,
 	})
 	if err != nil {
-		// We assume the error is the result of a bad request.
 		return httperr.
 			BadRequest("player %q/team %q in game %q gave invalid guess: %w", p.ID, userPR.Team, g.ID, err).
 			WithMessage(fmt.Sprintf("failed to make move: %v", err))
 	}
+
+	// Turing mode: override game-over detection and drive phase transitions ourselves.
+	if isTuring {
+		newStatus = codenames.Playing
+		newState.GameMode = codenames.TuringMode
+		if newState.ActiveRole == codenames.SpymasterRole {
+			// endTurn() was triggered inside game.Move — advance turing phase.
+			switch g.State.TuringPhase {
+			case codenames.TuringGuessRedPhase:
+				blueClue := turingClueForTeam(newState.Clues, codenames.BlueTeam)
+				if blueClue != nil {
+					newState.TuringPhase = codenames.TuringGuessBluPhase
+					newState.ActiveTeam = codenames.BlueTeam
+					newState.ActiveRole = codenames.OperativeRole
+					newState.NumGuessesLeft = blueClue.Count
+					if newState.NumGuessesLeft == 0 {
+						newState.NumGuessesLeft = -1
+					}
+				} else {
+					newState.TuringPhase = codenames.TuringVotePhase
+				}
+			case codenames.TuringGuessBluPhase:
+				newState.TuringPhase = codenames.TuringVotePhase
+			default:
+				newState.TuringPhase = g.State.TuringPhase
+			}
+		} else {
+			newState.TuringPhase = g.State.TuringPhase
+		}
+	}
+
 	g.State = newState
 	g.Status = newStatus
 
@@ -1069,7 +1276,7 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 			WithMessage("failed to inform players of guess")
 	}
 
-	if newStatus != codenames.Finished {
+	if newStatus != codenames.Finished || isTuring {
 		return jsonResp(w, struct {
 			Success bool `json:"success"`
 		}{true})
@@ -1082,7 +1289,6 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 			WithMessage("error with game state")
 	}
 
-	// The game is over, we should let folks know.
 	if err := s.hub.ToGame(g.ID, &msgs.GameEnd{
 		WinningTeam: winningTeam,
 		Game:        g,
@@ -1105,6 +1311,117 @@ func countVoters(prs []*codenames.PlayerRole, team codenames.Team) int {
 		}
 	}
 	return cnt
+}
+
+func countAllOperatives(prs []*codenames.PlayerRole) int {
+	cnt := 0
+	for _, pr := range prs {
+		if pr.Role == codenames.OperativeRole {
+			cnt++
+		}
+	}
+	return cnt
+}
+
+func turingClueForTeam(clues []codenames.SpymasterClue, team codenames.Team) *codenames.Clue {
+	for _, sc := range clues {
+		if sc.Team == team {
+			c := sc.Clue
+			return &c
+		}
+	}
+	return nil
+}
+
+func (s *Srv) serveTuringVote(w http.ResponseWriter, r *http.Request, p *codenames.Player, g *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
+	if g.State.GameMode != codenames.TuringMode {
+		return httperr.BadRequest("not a turing mode game").WithMessage("not a turing mode game")
+	}
+	if g.State.TuringPhase != codenames.TuringVotePhase {
+		return httperr.BadRequest("not in the vote phase").WithMessage("not time to vote")
+	}
+
+	var req struct {
+		SuspectedAITeam string `json:"suspected_ai_team"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return httperr.BadRequest("failed to decode turing vote request: %w", err)
+	}
+
+	suspectedTeam, ok := codenames.ToTeam(req.SuspectedAITeam)
+	if !ok {
+		return httperr.BadRequest("unknown team %q", req.SuspectedAITeam).WithMessage("invalid team")
+	}
+
+	actual, _ := s.turingVotes.LoadOrStore(g.ID, &turingVoteMap{votes: make(map[string]codenames.Team)})
+	vm := actual.(*turingVoteMap)
+	vm.mu.Lock()
+	vm.votes[p.ID.ID] = suspectedTeam
+	vm.mu.Unlock()
+
+	if err := s.hub.ToGame(g.ID, &msgs.TuringVoteCast{
+		PlayerID:        p.ID,
+		SuspectedAITeam: suspectedTeam,
+	}); err != nil {
+		log.Printf("failed to broadcast turing vote for game %q: %v", g.ID, err)
+	}
+
+	return jsonResp(w, struct {
+		Success bool `json:"success"`
+	}{true})
+}
+
+func (s *Srv) serveTuringResult(w http.ResponseWriter, r *http.Request, p *codenames.Player, g *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
+	if g.State.GameMode != codenames.TuringMode {
+		return httperr.BadRequest("not a turing mode game").WithMessage("not a turing mode game")
+	}
+
+	// Determine actual AI team by finding the robot spymaster.
+	actualAITeam := codenames.NoTeam
+	for _, pr := range prs {
+		if pr.Role == codenames.SpymasterRole {
+			if _, isRobot := pr.PlayerID.AsRobotID(); isRobot {
+				actualAITeam = pr.Team
+				break
+			}
+		}
+	}
+
+	var votesRedIsAI, votesBlueIsAI int
+	if vm, ok := s.turingVotes.Load(g.ID); ok {
+		vmap := vm.(*turingVoteMap)
+		vmap.mu.Lock()
+		for _, team := range vmap.votes {
+			if team == codenames.RedTeam {
+				votesRedIsAI++
+			} else if team == codenames.BlueTeam {
+				votesBlueIsAI++
+			}
+		}
+		vmap.mu.Unlock()
+	}
+
+	g.Status = codenames.Finished
+	if err := s.db.UpdateState(g.ID, g.State, g.Status); err != nil {
+		return httperr.
+			Internal("failed to finish game %q: %w", g.ID, err).
+			WithMessage("failed to end game")
+	}
+
+	if err := s.hub.ToGame(g.ID, &msgs.TuringResult{
+		ActualAITeam:  actualAITeam,
+		VotesRedIsAI:  votesRedIsAI,
+		VotesBlueIsAI: votesBlueIsAI,
+		Game:          g,
+	}); err != nil {
+		return httperr.
+			Internal("failed to broadcast turing result for game %q: %w", g.ID, err).
+			WithMessage("failed to reveal result")
+	}
+
+	return jsonResp(w, struct {
+		Success bool `json:"success"`
+	}{true})
 }
 
 func (s *Srv) serveData(w http.ResponseWriter, r *http.Request, p *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {

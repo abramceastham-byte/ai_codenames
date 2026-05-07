@@ -49,8 +49,16 @@
 		await api.startGame(game.id, true);
 	}
 
+	const isTuring = $derived(game?.state.game_mode === 'TURING');
+
 	// Derived check for startability
 	const canStart = $derived.by(() => {
+		if (isTuring) {
+			const rS = getPlayers('RED', 'SPYMASTER').length;
+			const bS = getPlayers('BLUE', 'SPYMASTER').length;
+			const ops = players.filter((p) => p.role === 'OPERATIVE').length;
+			return rS === 1 && bS === 1 && ops > 0;
+		}
 		const rS = getPlayers('RED', 'SPYMASTER').length;
 		const rO = getPlayers('RED', 'OPERATIVE').length;
 		const bS = getPlayers('BLUE', 'SPYMASTER').length;
@@ -68,7 +76,12 @@
 
 <div class="mx-auto max-w-6xl p-4">
 	<div class="mb-8 flex items-center justify-between">
-		<h1 class="text-3xl font-bold text-gray-800">Game Setup: {game?.id}</h1>
+		<div>
+			<h1 class="text-3xl font-bold text-gray-800">Game Setup: {game?.id}</h1>
+			{#if isTuring}
+				<span class="mt-1 inline-block rounded-full bg-purple-100 px-3 py-0.5 text-sm font-semibold text-purple-800">Turing Test Mode</span>
+			{/if}
+		</div>
 		<div class="space-x-2">
 			{#if isCreator}
 				<button
@@ -129,14 +142,13 @@
 		</div>
 	{/snippet}
 
-	<div class="grid grid-cols-2 gap-8">
-		<!-- RED TEAM -->
-		<div class="rounded-xl border-4 border-red-200 bg-red-50 p-6">
-			<h2 class="mb-6 text-center text-2xl font-bold text-red-800">RED TEAM</h2>
-
-			<div class="mb-6">
+	{#if isTuring}
+		<!-- Turing Test Mode layout: two spymasters + neutral operatives -->
+		<div class="grid grid-cols-2 gap-8 mb-8">
+			<!-- RED SPYMASTER -->
+			<div class="rounded-xl border-4 border-red-200 bg-red-50 p-6">
+				<h2 class="mb-4 text-center text-xl font-bold text-red-800">RED Spymaster</h2>
 				<div class="mb-2 flex items-center justify-between">
-					<h3 class="font-semibold text-red-900">Spymaster</h3>
 					{@render joinButtons('RED', 'SPYMASTER', 'bg-red-200 text-red-800 hover:bg-red-300')}
 				</div>
 				<div class="min-h-[60px] rounded bg-white p-4 shadow-sm">
@@ -149,29 +161,10 @@
 				</div>
 			</div>
 
-			<div>
+			<!-- BLUE SPYMASTER -->
+			<div class="rounded-xl border-4 border-blue-200 bg-blue-50 p-6">
+				<h2 class="mb-4 text-center text-xl font-bold text-blue-800">BLUE Spymaster</h2>
 				<div class="mb-2 flex items-center justify-between">
-					<h3 class="font-semibold text-red-900">Operatives</h3>
-					{@render joinButtons('RED', 'OPERATIVE', 'bg-red-200 text-red-800 hover:bg-red-300')}
-				</div>
-				<div class="min-h-[100px] rounded bg-white p-4 shadow-sm">
-					{#each getPlayers('RED', 'OPERATIVE') as p (p.player_id.id)}
-						<div class="flex items-center gap-2">
-							<div class="h-2 w-2 rounded-full bg-red-500"></div>
-							{p.name}
-						</div>
-					{/each}
-				</div>
-			</div>
-		</div>
-
-		<!-- BLUE TEAM -->
-		<div class="rounded-xl border-4 border-blue-200 bg-blue-50 p-6">
-			<h2 class="mb-6 text-center text-2xl font-bold text-blue-800">BLUE TEAM</h2>
-
-			<div class="mb-6">
-				<div class="mb-2 flex items-center justify-between">
-					<h3 class="font-semibold text-blue-900">Spymaster</h3>
 					{@render joinButtons('BLUE', 'SPYMASTER', 'bg-blue-200 text-blue-800 hover:bg-blue-300')}
 				</div>
 				<div class="min-h-[60px] rounded bg-white p-4 shadow-sm">
@@ -183,23 +176,97 @@
 					{/each}
 				</div>
 			</div>
+		</div>
 
-			<div>
-				<div class="mb-2 flex items-center justify-between">
-					<h3 class="font-semibold text-blue-900">Operatives</h3>
-					{@render joinButtons('BLUE', 'OPERATIVE', 'bg-blue-200 text-blue-800 hover:bg-blue-300')}
+		<!-- Neutral Operatives -->
+		<div class="rounded-xl border-4 border-purple-200 bg-purple-50 p-6">
+			<h2 class="mb-4 text-center text-xl font-bold text-purple-800">Operatives (Neutral)</h2>
+			<p class="mb-4 text-center text-sm text-purple-600">Operatives have no team — they guess for both clues and vote on which spymaster was AI.</p>
+			<div class="mb-2 flex items-center justify-between">
+				{@render joinButtons('', 'OPERATIVE', 'bg-purple-200 text-purple-800 hover:bg-purple-300')}
+			</div>
+			<div class="min-h-[80px] rounded bg-white p-4 shadow-sm">
+				{#each players.filter((p) => p.role === 'OPERATIVE') as p (p.player_id.id)}
+					<div class="flex items-center gap-2">
+						<div class="h-2 w-2 rounded-full bg-purple-500"></div>
+						{p.name}
+					</div>
+				{/each}
+			</div>
+		</div>
+	{:else}
+		<div class="grid grid-cols-2 gap-8">
+			<!-- RED TEAM -->
+			<div class="rounded-xl border-4 border-red-200 bg-red-50 p-6">
+				<h2 class="mb-6 text-center text-2xl font-bold text-red-800">RED TEAM</h2>
+
+				<div class="mb-6">
+					<div class="mb-2 flex items-center justify-between">
+						<h3 class="font-semibold text-red-900">Spymaster</h3>
+						{@render joinButtons('RED', 'SPYMASTER', 'bg-red-200 text-red-800 hover:bg-red-300')}
+					</div>
+					<div class="min-h-[60px] rounded bg-white p-4 shadow-sm">
+						{#each getPlayers('RED', 'SPYMASTER') as p (p.player_id.id)}
+							<div class="flex items-center gap-2">
+								<div class="h-2 w-2 rounded-full bg-red-500"></div>
+								{p.name}
+							</div>
+						{/each}
+					</div>
 				</div>
-				<div class="min-h-[100px] rounded bg-white p-4 shadow-sm">
-					{#each getPlayers('BLUE', 'OPERATIVE') as p (p.player_id.id)}
-						<div class="flex items-center gap-2">
-							<div class="h-2 w-2 rounded-full bg-blue-500"></div>
-							{p.name}
-						</div>
-					{/each}
+
+				<div>
+					<div class="mb-2 flex items-center justify-between">
+						<h3 class="font-semibold text-red-900">Operatives</h3>
+						{@render joinButtons('RED', 'OPERATIVE', 'bg-red-200 text-red-800 hover:bg-red-300')}
+					</div>
+					<div class="min-h-[100px] rounded bg-white p-4 shadow-sm">
+						{#each getPlayers('RED', 'OPERATIVE') as p (p.player_id.id)}
+							<div class="flex items-center gap-2">
+								<div class="h-2 w-2 rounded-full bg-red-500"></div>
+								{p.name}
+							</div>
+						{/each}
+					</div>
+				</div>
+			</div>
+
+			<!-- BLUE TEAM -->
+			<div class="rounded-xl border-4 border-blue-200 bg-blue-50 p-6">
+				<h2 class="mb-6 text-center text-2xl font-bold text-blue-800">BLUE TEAM</h2>
+
+				<div class="mb-6">
+					<div class="mb-2 flex items-center justify-between">
+						<h3 class="font-semibold text-blue-900">Spymaster</h3>
+						{@render joinButtons('BLUE', 'SPYMASTER', 'bg-blue-200 text-blue-800 hover:bg-blue-300')}
+					</div>
+					<div class="min-h-[60px] rounded bg-white p-4 shadow-sm">
+						{#each getPlayers('BLUE', 'SPYMASTER') as p (p.player_id.id)}
+							<div class="flex items-center gap-2">
+								<div class="h-2 w-2 rounded-full bg-blue-500"></div>
+								{p.name}
+							</div>
+						{/each}
+					</div>
+				</div>
+
+				<div>
+					<div class="mb-2 flex items-center justify-between">
+						<h3 class="font-semibold text-blue-900">Operatives</h3>
+						{@render joinButtons('BLUE', 'OPERATIVE', 'bg-blue-200 text-blue-800 hover:bg-blue-300')}
+					</div>
+					<div class="min-h-[100px] rounded bg-white p-4 shadow-sm">
+						{#each getPlayers('BLUE', 'OPERATIVE') as p (p.player_id.id)}
+							<div class="flex items-center gap-2">
+								<div class="h-2 w-2 rounded-full bg-blue-500"></div>
+								{p.name}
+							</div>
+						{/each}
+					</div>
 				</div>
 			</div>
 		</div>
-	</div>
+	{/if}
 
 	<div class="mt-8 text-center text-gray-500">
 		{#if canStart}

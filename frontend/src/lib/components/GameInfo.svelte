@@ -4,6 +4,8 @@
 	import { AGENT_RED, AGENT_BLUE } from '$lib/types';
 
 	const { game, lastClue } = $derived(gameStore);
+	const isTuring = $derived(game?.state.game_mode === 'TURING');
+	const turingPhase = $derived(game?.state.turing_phase);
 
 	const scores = $derived.by(() => {
 		if (!game) return { red: 0, blue: 0 };
@@ -45,36 +47,69 @@
 	const teamText = $derived(game?.state.active_team === 'RED' ? 'text-red-800' : 'text-blue-800');
 </script>
 
-<div class="mb-6 grid gap-4 md:grid-cols-4">
-	<!-- Red Score -->
-	<div class="rounded-lg border border-red-100 bg-red-50 p-4 text-center">
-		<div class="text-sm font-bold text-red-600 uppercase">Red Agents Left</div>
-		<div class="text-3xl font-bold text-red-800">{scores.red}</div>
-	</div>
+<div class="mb-6 grid gap-4 {isTuring ? 'md:grid-cols-3' : 'md:grid-cols-4'}">
+	{#if isTuring}
+		<!-- Turing mode: RED clue, phase, BLUE clue, timer -->
+		{@const redClue = game?.state.clues.find((c) => c.team === 'RED')}
+		{@const blueClue = game?.state.clues.find((c) => c.team === 'BLUE')}
 
-	<!-- Active Turn / Clue Info -->
-	<div class="rounded-lg border-2 p-4 text-center {teamColor}">
-		<div class="text-sm font-bold text-gray-500 uppercase">Current Turn</div>
-		<div class="text-xl font-bold {teamText}">
-			{game?.state.active_team}
-			{game?.state.active_role}
+		<div class="rounded-lg border border-red-100 bg-red-50 p-4 text-center">
+			<div class="text-sm font-bold text-red-600 uppercase">RED Clue</div>
+			{#if redClue}
+				<div class="font-mono text-xl font-bold text-red-800">{redClue.clue.word} ({redClue.clue.count})</div>
+			{:else}
+				<div class="text-gray-400 text-sm mt-1">Waiting...</div>
+			{/if}
 		</div>
 
-		{#if lastClue && lastClue.team === game?.state.active_team}
-			<div class="mt-2 border-t border-gray-300/50 pt-2">
-				<span class="text-sm text-gray-600">Current Clue:</span>
-				<div class="font-mono text-lg font-bold">{lastClue.word} ({lastClue.count})</div>
+		<div class="rounded-lg border-2 border-purple-200 bg-purple-50 p-4 text-center">
+			<div class="text-sm font-bold text-purple-600 uppercase">Phase</div>
+			<div class="text-lg font-bold text-purple-800">
+				{#if turingPhase === 'CLUE'}Clue Submission
+				{:else if turingPhase === 'GUESS_RED'}Guessing RED
+				{:else if turingPhase === 'GUESS_BLUE'}Guessing BLUE
+				{:else if turingPhase === 'VOTE'}Voting
+				{:else}{turingPhase}{/if}
 			</div>
-		{/if}
-	</div>
+		</div>
 
-	<!-- Blue Score -->
-	<div class="rounded-lg border border-blue-100 bg-blue-50 p-4 text-center">
-		<div class="text-sm font-bold text-blue-600 uppercase">Blue Agents Left</div>
-		<div class="text-3xl font-bold text-blue-800">{scores.blue}</div>
-	</div>
+		<div class="rounded-lg border border-blue-100 bg-blue-50 p-4 text-center">
+			<div class="text-sm font-bold text-blue-600 uppercase">BLUE Clue</div>
+			{#if blueClue}
+				<div class="font-mono text-xl font-bold text-blue-800">{blueClue.clue.word} ({blueClue.clue.count})</div>
+			{:else}
+				<div class="text-gray-400 text-sm mt-1">Waiting...</div>
+			{/if}
+		</div>
+	{:else}
+		<!-- Standard mode info -->
+		<div class="rounded-lg border border-red-100 bg-red-50 p-4 text-center">
+			<div class="text-sm font-bold text-red-600 uppercase">Red Agents Left</div>
+			<div class="text-3xl font-bold text-red-800">{scores.red}</div>
+		</div>
 
-	<!-- Game Timer -->
+		<div class="rounded-lg border-2 p-4 text-center {teamColor}">
+			<div class="text-sm font-bold text-gray-500 uppercase">Current Turn</div>
+			<div class="text-xl font-bold {teamText}">
+				{game?.state.active_team}
+				{game?.state.active_role}
+			</div>
+
+			{#if lastClue && lastClue.team === game?.state.active_team}
+				<div class="mt-2 border-t border-gray-300/50 pt-2">
+					<span class="text-sm text-gray-600">Current Clue:</span>
+					<div class="font-mono text-lg font-bold">{lastClue.word} ({lastClue.count})</div>
+				</div>
+			{/if}
+		</div>
+
+		<div class="rounded-lg border border-blue-100 bg-blue-50 p-4 text-center">
+			<div class="text-sm font-bold text-blue-600 uppercase">Blue Agents Left</div>
+			<div class="text-3xl font-bold text-blue-800">{scores.blue}</div>
+		</div>
+	{/if}
+
+	<!-- Game Timer (always shown) -->
 	<div class="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center">
 		<div class="text-sm font-bold text-gray-500 uppercase">
 			{gameStore.gameEndTime ? 'Final Time' : 'Elapsed'}
