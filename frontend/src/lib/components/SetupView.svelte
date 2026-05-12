@@ -39,14 +39,37 @@
 		await api.requestAI(game.id, team, role, selectedBackend[slotKey(team, role)] ?? '');
 	}
 
+	let startError = $state('');
+	let starting = $state(false);
+
 	async function startGame() {
 		if (!game) return;
-		await api.startGame(game.id);
+		startError = '';
+		starting = true;
+		try {
+			await api.startGame(game.id);
+			gameStore.game = await api.getGame(game.id);
+		} catch (e) {
+			startError = String(e);
+			alert('Start failed: ' + e);
+		} finally {
+			starting = false;
+		}
 	}
 
 	async function startRandom() {
 		if (!game) return;
-		await api.startGame(game.id, true);
+		startError = '';
+		starting = true;
+		try {
+			await api.startGame(game.id, true);
+			gameStore.game = await api.getGame(game.id);
+		} catch (e) {
+			startError = String(e);
+			alert('Start failed: ' + e);
+		} finally {
+			starting = false;
+		}
 	}
 
 	const isTuring = $derived(game?.state.game_mode === 'TURING');
@@ -56,8 +79,8 @@
 		if (isTuring) {
 			const rS = getPlayers('RED', 'SPYMASTER').length;
 			const bS = getPlayers('BLUE', 'SPYMASTER').length;
-			const ops = players.filter((p) => p.role === 'OPERATIVE').length;
-			return rS === 1 && bS === 1 && ops > 0;
+			// Operatives are optional in turing mode; if none join, GUESS phases are skipped.
+			return rS === 1 && bS === 1;
 		}
 		const rS = getPlayers('RED', 'SPYMASTER').length;
 		const rO = getPlayers('RED', 'OPERATIVE').length;
@@ -82,21 +105,27 @@
 				<span class="mt-1 inline-block rounded-full bg-purple-100 px-3 py-0.5 text-sm font-semibold text-purple-800">Turing Test Mode</span>
 			{/if}
 		</div>
-		<div class="space-x-2">
-			{#if isCreator}
-				<button
-					onclick={startRandom}
-					class="rounded bg-purple-600 px-4 py-2 font-bold text-white hover:bg-purple-700"
-				>
-					Randomize & Start
-				</button>
-				<button
-					onclick={startGame}
-					disabled={!canStart}
-					class="rounded bg-green-600 px-4 py-2 font-bold text-white hover:bg-green-700 disabled:bg-gray-400"
-				>
-					Start Game
-				</button>
+		<div class="flex flex-col items-end gap-1">
+{#if isCreator}
+				<div class="flex gap-2">
+					<button
+						onclick={startRandom}
+						disabled={starting}
+						class="rounded bg-purple-600 px-4 py-2 font-bold text-white hover:bg-purple-700 disabled:opacity-50"
+					>
+						{starting ? 'Starting…' : 'Randomize & Start'}
+					</button>
+					<button
+						onclick={startGame}
+						disabled={!canStart || starting}
+						class="rounded bg-green-600 px-4 py-2 font-bold text-white hover:bg-green-700 disabled:bg-gray-400"
+					>
+						{starting ? 'Starting…' : 'Start Game'}
+					</button>
+				</div>
+				{#if startError}
+					<p class="text-sm text-red-600">{startError}</p>
+				{/if}
 			{/if}
 		</div>
 	</div>
@@ -112,7 +141,7 @@
 	{/snippet}
 
 	{#snippet aiButton(team: Team, role: Role, classes: string)}
-		{#if isCreator}
+		{#if isCreator && !(isTuring && role === 'OPERATIVE')}
 			{#if backends.length > 1}
 				<select
 					bind:value={selectedBackend[slotKey(team, role)]}

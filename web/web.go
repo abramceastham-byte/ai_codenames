@@ -815,7 +815,7 @@ func (s *Srv) finishAssigningRoles(game *codenames.Game, prs []*codenames.Player
 	isTuring := game.State.GameMode == codenames.TuringMode
 	minPlayers := 4
 	if isTuring {
-		minPlayers = 3
+		minPlayers = 2
 	}
 	if len(prs) < minPlayers {
 		return false, httperr.
@@ -1089,8 +1089,13 @@ func (s *Srv) revealTuringClues(gID codenames.GameID) {
 	}
 	g.State.PendingClues = nil
 
-	// Determine starting guess phase based on which clues were submitted.
-	if redClue != nil {
+	// Determine starting guess phase based on which clues were submitted and whether
+	// there are any operatives to do the guessing.
+	hasOperatives := countAllOperatives(prs) > 0
+	if !hasOperatives {
+		// No operatives joined — skip GUESS phases entirely, go straight to vote.
+		g.State.TuringPhase = codenames.TuringVotePhase
+	} else if redClue != nil {
 		g.State.TuringPhase = codenames.TuringGuessRedPhase
 		g.State.ActiveTeam = codenames.RedTeam
 		g.State.ActiveRole = codenames.OperativeRole

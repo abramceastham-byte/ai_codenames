@@ -383,9 +383,7 @@ func AllRolesFilledTuring(prs []*PlayerRole) error {
 	if blueSM != 1 {
 		return fmt.Errorf("need exactly one BLUE spymaster, have %d", blueSM)
 	}
-	if ops == 0 {
-		return fmt.Errorf("need at least one operative")
-	}
+	_ = ops // operatives are optional; if none join, GUESS phases are skipped
 	return nil
 }
 
