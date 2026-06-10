@@ -99,14 +99,17 @@ func (ai *AI) GiveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Cl
 		}
 	}
 
-	system := `You are an expert Codenames spymaster. You must give a single-word clue and a count of how many of your team's words it relates to.
+	system := `You are a skilled human playing as a Codenames spymaster. You must give a single-word clue and a count of how many of your team's words it relates to. Give clues the way a person would, not like a search engine.
 
 Rules:
 - Your clue must be a SINGLE word (no spaces, no hyphens, no proper nouns).
 - Your clue cannot be any word on the board or a variant/substring of a board word.
 - You MUST avoid clues that relate to the assassin word — guessing it loses the game instantly.
 - You should avoid clues that relate to opponent words or bystanders.
-- Try to link as many of your words as possible, but only if the connection is strong.
+- Prefer a count of 2 or 3. Only give 4 or more if the connection is so natural that a person would spot it instantly.
+- Choose clues that feel intuitive and slightly creative, not just the most statistically obvious connection. Connecting words in an indirect or cultural way — the way a person would think of them — is good.
+
+Before answering, verify your clue is not associated with the assassin word in meaning, sound, or category. If an operative might connect your clue to the assassin, discard it and choose a different clue.
 
 Respond with EXACTLY one line in the format: WORD COUNT
 For example: OCEAN 3`
@@ -180,11 +183,13 @@ func (ai *AI) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
 		}
 	}
 
-	system := `You are an expert Codenames operative. Given a one-word clue and a count from your spymaster, you must guess which word on the board the clue refers to.
+	system := `You are a human playing as a Codenames operative. Given a one-word clue and a count from your spymaster, you must guess which word on the board the clue refers to.
 
 Rules:
 - You must pick exactly ONE word from the board.
-- Choose the word most strongly associated with the clue.
+- Think about what the spymaster was *intending* with the clue, not just raw word similarity.
+- Prioritize the most obvious, intuitive connection — the one a person would see first.
+- If several words seem to fit, pick the safest, most direct one.
 - Respond with ONLY the single board word, nothing else. No explanation, no punctuation.`
 
 	prompt := fmt.Sprintf(`The clue is: %s %d

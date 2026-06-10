@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bcspragu/Codenames/client"
 	"github.com/bcspragu/Codenames/codenames"
@@ -304,16 +305,27 @@ func (s *Server) playGame(ai AI, c *client.Client, gID codenames.GameID, rID cod
 }
 
 func (s *Server) giveClue(ai AI, b *codenames.Board, agent codenames.Agent) (*codenames.Clue, error) {
+	start := time.Now()
 	clue, err := ai.GiveClue(b, agent)
 	if err != nil {
 		log.Printf("[ERROR] AI failed to make a clue: %v", err)
-		return &codenames.Clue{
+		clue = &codenames.Clue{
 			Word:  "???",
 			Count: 1,
-		}, nil
+		}
 	}
 
+	humanThinkDelay(start, 8*time.Second, 25*time.Second)
 	return clue, nil
+}
+
+// humanThinkDelay sleeps until the total time elapsed since start falls
+// somewhere in [min, max), so AI responses don't arrive at inhuman speed.
+func humanThinkDelay(start time.Time, min, max time.Duration) {
+	target := min + time.Duration(rand.Int63n(int64(max-min)))
+	if remaining := target - time.Since(start); remaining > 0 {
+		time.Sleep(remaining)
+	}
 }
 
 func toAgent(team codenames.Team) codenames.Agent {
@@ -328,12 +340,14 @@ func toAgent(team codenames.Team) codenames.Agent {
 }
 
 func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue) (string, error) {
+	start := time.Now()
 	guess, err := ai.Guess(b, clue)
 	if err != nil || guess == "" {
 		log.Printf("[ERROR] AI failed to make a guess: %v", err)
-		return s.guessRandomly(b)
+		guess, err = s.guessRandomly(b)
 	}
-	return guess, nil
+	humanThinkDelay(start, 3*time.Second, 15*time.Second)
+	return guess, err
 }
 
 func (s *Server) guessRandomly(b *codenames.Board) (string, error) {
