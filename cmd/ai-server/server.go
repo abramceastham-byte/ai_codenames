@@ -251,7 +251,7 @@ func (s *Server) playGame(ai AI, c *client.Client, gID codenames.GameID, rID cod
 			}
 			log.Printf("Clue %q was given, and I'm guessing!", cg.Clue)
 
-			guess, err := s.guess(ai, cg.Game.State.Board, cg.Clue)
+			guess, err := s.guess(ai, cg.Game.State.Board, cg.Clue, true /* mustGuess */)
 			if err != nil {
 				log.Printf("[ERROR] failed to make a guess for clue %+v: %v", cg.Clue, err)
 				return
@@ -282,7 +282,7 @@ func (s *Server) playGame(ai AI, c *client.Client, gID codenames.GameID, rID cod
 			}
 
 			if gg.Team == team && gg.CanKeepGuessing && role == codenames.OperativeRole {
-				guess, err := s.guess(ai, gg.Game.State.Board, lastClue)
+				guess, err := s.guess(ai, gg.Game.State.Board, lastClue, false /* mustGuess */)
 				if err != nil {
 					log.Printf("[ERROR] failed to make a guess for clue %+v: %v", lastClue, err)
 					return
@@ -337,12 +337,32 @@ func toAgent(team codenames.Team) codenames.Agent {
 	}
 }
 
-func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue) (string, error) {
+// passingOperative is implemented by AI backends that can decline to guess
+// (by returning codenames.PassGuess) when passing is allowed.
+type passingOperative interface {
+	GuessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, error)
+}
+
+// guess asks the AI for a guess. mustGuess is true on the first guess after a
+// clue — Codenames requires at least one guess per clue — and false on
+// follow-up guesses, where the AI may pass. A pass is sent to the web server
+// as an empty guess, which ends the turn.
+func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue, mustGuess bool) (string, error) {
 	start := time.Now()
-	guess, err := ai.Guess(b, clue)
+	var (
+		guess string
+		err   error
+	)
+	if po, ok := ai.(passingOperative); ok {
+		guess, err = po.GuessOrPass(b, clue, mustGuess)
+	} else {
+		guess, err = ai.Guess(b, clue)
+	}
 	if err != nil || guess == "" {
 		log.Printf("[ERROR] AI failed to make a guess: %v", err)
 		guess, err = s.guessRandomly(b)
+	} else if guess == codenames.PassGuess {
+		guess = ""
 	}
 	humanThinkDelay(start, 3*time.Second, 15*time.Second)
 	return guess, err

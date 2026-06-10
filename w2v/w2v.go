@@ -404,7 +404,19 @@ func hammingDistance(a, b string) int {
 	return dist
 }
 
+// passThreshold is the minimum cosine similarity between the clue and the
+// best remaining board word for the operative to risk another guess. Related
+// ConceptNet words usually score 0.3+, unrelated ones under ~0.15.
+const passThreshold = 0.15
+
 func (ai *AI) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
+	return ai.GuessOrPass(b, c, true /* mustGuess */)
+}
+
+// GuessOrPass is like Guess, but when mustGuess is false it may return
+// codenames.PassGuess to end the turn if even the best remaining word is a
+// poor match for the clue.
+func (ai *AI) GuessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, error) {
 	type pair struct {
 		Word       string
 		Similarity float32
@@ -440,6 +452,11 @@ func (ai *AI) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
 	// This is a crutch for when the player enters a word that isn't in the model.
 	if len(pairs) == 0 {
 		return "", nil
+	}
+
+	if !mustGuess && pairs[0].Similarity < passThreshold {
+		log.Printf("best guess %q for clue %q only scored %f, passing", pairs[0].Word, c.Word, pairs[0].Similarity)
+		return codenames.PassGuess, nil
 	}
 
 	return pairs[0].Word, nil

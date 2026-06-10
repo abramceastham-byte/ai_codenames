@@ -18,6 +18,31 @@ UPDATES
 
 Date:     2026-06-10
 Commit:   uncommitted
+Files:    codenames/codenames.go, w2v/w2v.go, llm/llm.go,
+          cmd/ai-server/server.go, frontend/src/lib/game.svelte.ts
+Summary:
+  - AI operatives can now PASS (end the turn) instead of being forced to
+    guess. The game engine and web API already supported passing (the
+    human "End Turn" button uses it); this wires the AIs into it.
+      * New codenames.PassGuess sentinel + GuessOrPass(board, clue,
+        mustGuess) on both AI backends. mustGuess is true on the first
+        guess after a clue (Codenames requires at least one guess), so
+        AIs only pass on follow-up guesses.
+      * An AI pass is a consensus vote like any other — on mixed teams
+        humans still have to agree before the turn ends.
+  - w2v guesser: passes when the best remaining word scores below a 0.15
+    cosine-similarity threshold — no more wild low-confidence guesses.
+  - LLM operative: on follow-up guesses the prompt offers "respond PASS
+    if nothing fits or everything feels risky".
+  - LLM spymaster is now risk-averse: prompt makes it check targets
+    against opponent/bystander/assassin words and lower its count when
+    uncertain ("Uncertainty = lower count").
+  - Game history shows "(pass)" for passed turns.
+
+--------------------------------------------------------------------------------
+
+Date:     2026-06-10
+Commit:   uncommitted
 Files:    names/names.go (new), web/web.go, web/web_test.go,
           cmd/ai-server/server.go, frontend/src/lib/api.ts,
           frontend/src/lib/game.svelte.ts, frontend/src/routes/login/+page.svelte
@@ -78,11 +103,22 @@ TO-DO LIST
 ================================================================================
 Fill in as needed. Mark items: [ ] = open, [x] = done
 
-[ ] Add a "pass" action to the game protocol so AI operatives can stop
+[x] Add a "pass" action to the game protocol so AI operatives can stop
     guessing early when unsure (enables human-like hesitation).
-[ ] Make the w2v guesser less mechanical (e.g., skip guesses below a
+[x] Make the w2v guesser less mechanical (e.g., skip guesses below a
     confidence threshold once passing exists).
 [x] Change the name of the AI players to be random generated usernames like the users. All users
     and AIs must have a similar randomly generated name to take guessing names out of the equation.
 [ ] Change the log to only display for admins and not to those are playing the game.
-[ ]
+[ ] Check the log functionality, games should save to a log.txt file with all data.
+[ ] Make sure when the log does display for admins, when a w2v model plays it should
+    say W2V under MODEL and when an LLM plays it should say LLM
+    (NOTE: the old name-prefix detection broke when usernames went random;
+    the backend needs to expose player type + AI backend to fix this properly.)
+[x] Make the LLM be scared of risk.
+  Before finalizing your clue, explicitly ask yourself:
+- Could any of my target words be mistaken for the opponent's words?
+- Is there any bystander or assassin word that shares my clue?
+- If yes, reduce your count or choose a safer clue.
+  Never give a count higher than the number of words you are 
+  highly confident about. Uncertainty = lower count.

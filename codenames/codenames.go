@@ -30,6 +30,12 @@ type Operative interface {
 	Guess(*Board, *Clue) (string, error)
 }
 
+// PassGuess is a sentinel guess value an AI Operative can return to decline
+// guessing and end its team's turn. It's distinct from returning an empty
+// string, which signals "no guess could be made" and triggers fallbacks. The
+// angle brackets guarantee it can never collide with a board word.
+const PassGuess = "<pass>"
+
 // Board contains all of the information about a game of Codenames.
 type Board struct {
 	// Cards is a list of the 25 words on the board. The zeroth card corresponds

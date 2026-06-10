@@ -109,7 +109,13 @@ Rules:
 - Prefer a count of 2 or 3. Only give 4 or more if the connection is so natural that a person would spot it instantly.
 - Choose clues that feel intuitive and slightly creative, not just the most statistically obvious connection. Connecting words in an indirect or cultural way — the way a person would think of them — is good.
 
-Before answering, verify your clue is not associated with the assassin word in meaning, sound, or category. If an operative might connect your clue to the assassin, discard it and choose a different clue.
+Before finalizing your clue, explicitly ask yourself:
+- Is this clue associated with the assassin word in meaning, sound, or category? If an operative might connect it to the assassin, discard it and choose a different clue.
+- Could any of my target words be mistaken for the opponent's words?
+- Is there any bystander or assassin word that shares my clue?
+- If yes, reduce your count or choose a safer clue.
+
+Never give a count higher than the number of words you are highly confident about. Uncertainty = lower count.
 
 Respond with EXACTLY one line in the format: WORD COUNT
 For example: OCEAN 3`
@@ -176,6 +182,12 @@ func parseClueResponse(reply string) (*codenames.Clue, error) {
 
 // Guess implements codenames.Operative.
 func (ai *AI) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
+	return ai.GuessOrPass(b, c, true /* mustGuess */)
+}
+
+// GuessOrPass is like Guess, but when mustGuess is false it may return
+// codenames.PassGuess to end the turn instead of risking a bad guess.
+func (ai *AI) GuessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, error) {
 	var unrevealed []string
 	for _, card := range b.Cards {
 		if !card.Revealed {
@@ -191,6 +203,11 @@ Rules:
 - Prioritize the most obvious, intuitive connection — the one a person would see first.
 - If several words seem to fit, pick the safest, most direct one.
 - Respond with ONLY the single board word, nothing else. No explanation, no punctuation.`
+
+	if !mustGuess {
+		system += `
+- You have already made at least one guess for this clue. If none of the remaining words connect well to the clue, or every candidate feels too risky, respond with exactly PASS to stop guessing and end your turn.`
+	}
 
 	prompt := fmt.Sprintf(`The clue is: %s %d
 
@@ -218,6 +235,11 @@ Your guess:`, c.Word, c.Count, strings.Join(unrevealed, ", "))
 			return guess, nil
 		}
 
+		if !mustGuess && isPassResponse(reply) {
+			log.Printf("[LLM Operative] passing on clue %q", c.Word)
+			return codenames.PassGuess, nil
+		}
+
 		// Ask the model to try again with the board words emphasized.
 		messages = append(messages,
 			chatMessage{Role: "assistant", Content: reply},
@@ -228,6 +250,15 @@ Your guess:`, c.Word, c.Count, strings.Join(unrevealed, ", "))
 	// All retries failed — return empty to trigger random guess fallback.
 	log.Printf("[LLM Operative] all retries failed for clue %q, falling back", c.Word)
 	return "", nil
+}
+
+// isPassResponse reports whether the LLM's reply is a pass. Board-word
+// matches are checked first by the caller, so a board word named "pass" still
+// resolves to a guess.
+func isPassResponse(reply string) bool {
+	firstLine := strings.Split(strings.TrimSpace(reply), "\n")[0]
+	firstLine = strings.Trim(strings.TrimSpace(firstLine), `*."'`)
+	return strings.EqualFold(firstLine, "pass")
 }
 
 // parseGuessResponse finds the best matching board word from the LLM's response.

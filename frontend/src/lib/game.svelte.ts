@@ -163,7 +163,7 @@ export class GameStore {
 						round,
 						team: msg.team,
 						type: 'guess',
-						detail: msg.guess,
+						detail: msg.guess || '(pass)',
 						result: this._agentToResult(msg.card?.agent),
 						model: this._modelForTeamRole(msg.team, 'OPERATIVE'),
 						durationMs: duration
