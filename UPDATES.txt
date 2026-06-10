@@ -17,6 +17,27 @@ UPDATES
 ================================================================================
 
 Date:     2026-06-10
+Commit:   uncommitted
+Files:    names/names.go (new), web/web.go, web/web_test.go,
+          cmd/ai-server/server.go, frontend/src/lib/api.ts,
+          frontend/src/lib/game.svelte.ts, frontend/src/routes/login/+page.svelte
+Summary:
+  - All players (humans AND AIs) now get a randomly generated username
+    (e.g. "StormyBison14") assigned by the web server at creation, so
+    names can't be used to tell humans and AIs apart.
+  - New names/ package generates AdjectiveAnimal## style usernames
+    (~230k combinations).
+  - The web server ignores any client-supplied name; the create-player
+    response now includes the assigned "name".
+  - AI server no longer generates "W2V-12345" style names (dead giveaway).
+  - Login page no longer asks for a name — just a join button; players
+    see their assigned agent name once in the lobby.
+  - Fixed web tests (missing logDir arg) and made test names deterministic
+    via an injectable name generator.
+
+--------------------------------------------------------------------------------
+
+Date:     2026-06-10
 Commit:   5411d36
 Files:    .gitignore
 Summary:
@@ -61,7 +82,7 @@ Fill in as needed. Mark items: [ ] = open, [x] = done
     guessing early when unsure (enables human-like hesitation).
 [ ] Make the w2v guesser less mechanical (e.g., skip guesses below a
     confidence threshold once passing exists).
-[ ] Change the name of the AI players to be random generated usernames like the users. All users
+[x] Change the name of the AI players to be random generated usernames like the users. All users
     and AIs must have a similar randomly generated name to take guessing names out of the equation.
 [ ] Change the log to only display for admins and not to those are playing the game.
 [ ]

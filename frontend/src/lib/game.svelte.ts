@@ -64,10 +64,10 @@ export class GameStore {
 		}
 	}
 
-	async login(name: string) {
-		const res = await this.api.createUser(name);
+	async login() {
+		const res = await this.api.createUser();
 		if (res.success) {
-			this.user = { id: res.user_id, name };
+			this.user = { id: res.user_id, name: res.name };
 			const redirect = new URLSearchParams(window.location.search).get('redirect');
 			if (redirect && redirect.startsWith('/')) {
 				await goto(redirect);

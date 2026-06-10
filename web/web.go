@@ -21,6 +21,7 @@ import (
 	"github.com/bcspragu/Codenames/httperr"
 	"github.com/bcspragu/Codenames/hub"
 	"github.com/bcspragu/Codenames/msgs"
+	"github.com/bcspragu/Codenames/names"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/securecookie"
 	"github.com/gorilla/websocket"
@@ -40,6 +41,7 @@ type Srv struct {
 	consensus *consensus.Guesser
 	ai        *aiclient.Client
 	logDir    string
+	genName   func() string
 }
 
 // New returns an initialized server.
@@ -57,6 +59,7 @@ func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aicli
 		consensus: consensus.New(),
 		ai:        ai,
 		logDir:    logDir,
+		genName:   names.Random,
 	}
 
 	s.mux = s.initMux()
@@ -228,20 +231,10 @@ func (s *Srv) serveCreateUser(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Srv) serveCreatePlayer(w http.ResponseWriter, r *http.Request, pt codenames.PlayerType) error {
-	var req struct {
-		Name string `json:"name"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return httperr.BadRequest("failed to decode create player request: %w", err)
-	}
-
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		return httperr.
-			BadRequest("create player request contained no name").
-			WithMessage("no name given")
-	}
+	// Players don't pick their own names — everyone (human or AI) gets a
+	// randomly generated one so names can't be used to tell humans and AIs
+	// apart. Any name in the request body is intentionally ignored.
+	name := s.genName()
 
 	var newPlayer func(name string) (codenames.PlayerID, error)
 	switch pt {
@@ -293,8 +286,9 @@ func (s *Srv) serveCreatePlayer(w http.ResponseWriter, r *http.Request, pt coden
 		// Note: Leaving this as "user_id" instead of "player_id" for backwards
 		// compatibility.
 		UserID  string `json:"user_id"`
+		Name    string `json:"name"`
 		Success bool   `json:"success"`
-	}{string(id.ID), true})
+	}{string(id.ID), name, true})
 }
 
 func (s *Srv) serveUpdateUser(w http.ResponseWriter, r *http.Request) error {

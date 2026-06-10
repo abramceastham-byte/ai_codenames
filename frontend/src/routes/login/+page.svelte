@@ -5,12 +5,15 @@
 
 	let { data }: PageProps = $props();
 
-	let name = $state('');
+	let loading = $state(false);
 
 	async function handleSubmit(e: Event) {
 		e.preventDefault();
-		if (name.trim()) {
-			await gameStore.login(name.trim());
+		loading = true;
+		try {
+			await gameStore.login();
+		} finally {
+			loading = false;
 		}
 	}
 </script>
@@ -20,23 +23,18 @@
 		<h1 class="mb-6 text-center text-3xl font-bold text-gray-800">Codenames</h1>
 
 		<form onsubmit={handleSubmit} class="space-y-4">
-			<div>
-				<label for="name" class="block text-sm font-medium text-gray-700">Enter your name</label>
-				<input
-					type="text"
-					id="name"
-					bind:value={name}
-					class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-blue-500 focus:ring-blue-500 focus:outline-none"
-					placeholder="Agent Name"
-					required
-				/>
-			</div>
+			<p class="text-center text-sm text-gray-600">
+				You'll be assigned a random agent name when you join.
+			</p>
 
 			<button
 				type="submit"
-				class="w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:outline-none"
+				disabled={loading}
+				class="w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:outline-none disabled:opacity-50"
 			>
-				{#if data.hasRedirectToGame}
+				{#if loading}
+					Joining…
+				{:else if data.hasRedirectToGame}
 					Join Game
 				{:else}
 					Enter Lobby

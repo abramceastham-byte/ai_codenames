@@ -28,8 +28,8 @@ export class Api {
 		return res.json();
 	}
 
-	async createUser(name: string): Promise<{ user_id: string; success: boolean }> {
-		return this.post('/api/user', { name });
+	async createUser(): Promise<{ user_id: string; name: string; success: boolean }> {
+		return this.post('/api/user', {});
 	}
 
 	async getUser(): Promise<{ id: string; name: string } | null> {

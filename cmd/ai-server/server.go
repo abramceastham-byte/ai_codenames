@@ -7,8 +7,6 @@ import (
 	"math/rand"
 	"net/http"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -156,17 +154,17 @@ func (s *Server) serveJoin(w http.ResponseWriter, r *http.Request) error {
 			WithMessage("requested AI backend is not available")
 	}
 
-	name := s.aiName(backendName)
-
 	// We need a client-per-bot because it has its own cookie jar for auth
 	c, err := client.New(s.webServerEndpoint)
 	if err != nil {
 		return httperr.Internal("failed to init Codenames client: %w", err)
 	}
 
-	pID, err := c.CreateUser(name, codenames.PlayerTypeRobot)
+	// The web server assigns every player (human or AI) a random generated
+	// name, so we don't send one.
+	pID, err := c.CreateUser("", codenames.PlayerTypeRobot)
 	if err != nil {
-		return httperr.Internal("failed to create user %q: %w", name, err)
+		return httperr.Internal("failed to create AI user: %w", err)
 	}
 	rID := codenames.RobotID(pID)
 
@@ -357,14 +355,6 @@ func (s *Server) guessRandomly(b *codenames.Board) (string, error) {
 	}
 
 	return unused[s.r.Intn(len(unused))].Codename, nil
-}
-
-func (s *Server) aiName(backend string) string {
-	var buf strings.Builder
-	buf.WriteString(strings.ToUpper(backend))
-	buf.WriteString("-")
-	buf.WriteString(strconv.Itoa(s.r.Int()))
-	return buf.String()
 }
 
 type handlerFunc func(w http.ResponseWriter, r *http.Request) error
