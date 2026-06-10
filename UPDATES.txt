@@ -1,0 +1,67 @@
+================================================================================
+                        AI CODENAMES — PROJECT UPDATES LOG
+================================================================================
+Newest entries at the top. Copy the entry template below to add a new update.
+
+--------------------------------------------------------------------------------
+ENTRY TEMPLATE (copy/paste for new entries)
+--------------------------------------------------------------------------------
+Date:     YYYY-MM-DD
+Commit:   <hash or "uncommitted">
+Files:    <files changed>
+Summary:
+  - <what changed and why>
+
+================================================================================
+UPDATES
+================================================================================
+
+Date:     2026-06-10
+Commit:   5411d36
+Files:    .gitignore
+Summary:
+  - Added logs/ to .gitignore so generated game CSVs (logs/all_games.csv)
+    no longer show up as untracked files.
+
+--------------------------------------------------------------------------------
+
+Date:     2026-06-10
+Commit:   fdd53a9
+Files:    cmd/ai-server/server.go, llm/llm.go
+Summary:
+  - Added randomized human-like thinking delays to the AI server so bot
+    response times no longer give them away in Turing test games:
+      * Clues:   8-25 seconds
+      * Guesses: 3-15 seconds
+    Delay is measured from the start of the AI call, so slow LLM responses
+    count toward the target instead of stacking on top. Applies to BOTH the
+    w2v and llm backends.
+  - Rewrote the LLM spymaster prompt to play more like a human:
+      * Prefer clue counts of 2 or 3; only give 4+ when the connection is
+        instantly obvious.
+      * Favor intuitive, slightly creative, or cultural connections over
+        the most statistically obvious one.
+      * Added a self-check step: before answering, verify the clue is not
+        associated with the assassin word in meaning, sound, or category.
+  - Rewrote the LLM operative prompt to play more like a human:
+      * Reason about what the spymaster INTENDED, not raw word similarity.
+      * Prioritize the most obvious connection a person would see first.
+      * Pick the safest, most direct word when several fit.
+  - NOTE: "stop early / pass on risky guesses" was intentionally NOT added
+    to the operative prompt — the game protocol has no pass action, so a
+    refusal would trigger the random-guess fallback (more detectable, not
+    less). Needs a protocol-level pass mechanism first (see to-do list).
+
+================================================================================
+TO-DO LIST
+================================================================================
+Fill in as needed. Mark items: [ ] = open, [x] = done
+
+[ ] Add a "pass" action to the game protocol so AI operatives can stop
+    guessing early when unsure (enables human-like hesitation).
+[ ] Make the w2v guesser less mechanical (e.g., skip guesses below a
+    confidence threshold once passing exists).
+[ ] Change the name of the AI players to be random generated usernames like the users. All users
+    and AIs must have a similar randomly generated name to take guessing names out of the equation.
+[ ] Change the log to only display for admins and not to those are playing the game.
+[ ]
