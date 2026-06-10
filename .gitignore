@@ -15,3 +15,4 @@ hashKey
 node_modules
 embeddings/spymaster.bin
 embeddings/operative.bin
+logs/
