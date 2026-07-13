@@ -72,6 +72,17 @@ func (ai *AI) chat(messages []chatMessage) (string, error) {
 
 // GiveClue implements codenames.Spymaster.
 func (ai *AI) GiveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Clue, error) {
+	clue, _, err := ai.giveClue(b, agent)
+	return clue, err
+}
+
+// GiveClueWithReasoning is like GiveClue, but also returns a human-readable
+// explanation of why the clue was chosen.
+func (ai *AI) GiveClueWithReasoning(b *codenames.Board, agent codenames.Agent) (*codenames.Clue, string, error) {
+	return ai.giveClue(b, agent)
+}
+
+func (ai *AI) giveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Clue, string, error) {
 	teamName := "Red"
 	if agent == codenames.BlueAgent {
 		teamName = "Blue"
@@ -117,8 +128,12 @@ Before finalizing your clue, explicitly ask yourself:
 
 Never give a count higher than the number of words you are highly confident about. Uncertainty = lower count.
 
-Respond with EXACTLY one line in the format: WORD COUNT
-For example: OCEAN 3`
+Respond with EXACTLY two lines:
+WORD COUNT
+REASON: <one short sentence explaining your reasoning>
+For example:
+OCEAN 3
+REASON: Whale, ship, and wave are all things found in the ocean.`
 
 	prompt := fmt.Sprintf(`You are the %s team spymaster.
 
@@ -138,18 +153,31 @@ Give your clue:`, teamName,
 		{Role: "user", Content: prompt},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("llm chat: %w", err)
+		return nil, "", fmt.Errorf("llm chat: %w", err)
 	}
 
 	log.Printf("[LLM Spymaster] raw response: %q", reply)
 
 	clue, err := parseClueResponse(reply)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse LLM clue %q: %w", reply, err)
+		return nil, "", fmt.Errorf("failed to parse LLM clue %q: %w", reply, err)
 	}
 
-	log.Printf("[LLM Spymaster] clue: %s %d", clue.Word, clue.Count)
-	return clue, nil
+	reasoning := extractReason(reply)
+	log.Printf("[LLM Spymaster] clue: %s %d (reason: %s)", clue.Word, clue.Count, reasoning)
+	return clue, reasoning, nil
+}
+
+// extractReason returns the text following a "REASON:" line in an LLM reply,
+// or "" if no such line is present.
+func extractReason(reply string) string {
+	for _, line := range strings.Split(reply, "\n") {
+		line = strings.TrimSpace(line)
+		if idx := strings.IndexByte(line, ':'); idx > 0 && strings.EqualFold(line[:idx], "reason") {
+			return strings.TrimSpace(line[idx+1:])
+		}
+	}
+	return ""
 }
 
 // parseClueResponse extracts a "WORD COUNT" clue from the LLM's response.
@@ -160,6 +188,9 @@ func parseClueResponse(reply string) (*codenames.Clue, error) {
 	// Try each line, last first, looking for "WORD NUMBER" pattern.
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(strings.ToLower(line), "reason:") {
+			continue
+		}
 		// Strip common prefixes the model might add
 		line = strings.TrimPrefix(line, "Clue: ")
 		line = strings.TrimPrefix(line, "clue: ")
@@ -188,6 +219,17 @@ func (ai *AI) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
 // GuessOrPass is like Guess, but when mustGuess is false it may return
 // codenames.PassGuess to end the turn instead of risking a bad guess.
 func (ai *AI) GuessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, error) {
+	guess, _, err := ai.guessOrPass(b, c, mustGuess)
+	return guess, err
+}
+
+// GuessOrPassWithReasoning is like GuessOrPass, but also returns a
+// human-readable explanation of why the guess (or pass) was chosen.
+func (ai *AI) GuessOrPassWithReasoning(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, string, error) {
+	return ai.guessOrPass(b, c, mustGuess)
+}
+
+func (ai *AI) guessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, string, error) {
 	var unrevealed []string
 	for _, card := range b.Cards {
 		if !card.Revealed {
@@ -202,11 +244,11 @@ Rules:
 - Think about what the spymaster was *intending* with the clue, not just raw word similarity.
 - Prioritize the most obvious, intuitive connection — the one a person would see first.
 - If several words seem to fit, pick the safest, most direct one.
-- Respond with ONLY the single board word, nothing else. No explanation, no punctuation.`
+- Respond with EXACTLY two lines: the single board word on the first line, then "REASON: <one short sentence>" on the second line explaining your choice. No other text.`
 
 	if !mustGuess {
 		system += `
-- You have already made at least one guess for this clue. If none of the remaining words connect well to the clue, or every candidate feels too risky, respond with exactly PASS to stop guessing and end your turn.`
+- You have already made at least one guess for this clue. If none of the remaining words connect well to the clue, or every candidate feels too risky, respond with PASS on the first line (followed by a REASON line) to stop guessing and end your turn.`
 	}
 
 	prompt := fmt.Sprintf(`The clue is: %s %d
@@ -224,20 +266,22 @@ Your guess:`, c.Word, c.Count, strings.Join(unrevealed, ", "))
 	for attempt := range 3 {
 		reply, err := ai.chat(messages)
 		if err != nil {
-			return "", fmt.Errorf("llm chat: %w", err)
+			return "", "", fmt.Errorf("llm chat: %w", err)
 		}
 
 		log.Printf("[LLM Operative] clue=%q, attempt=%d, raw response: %q", c.Word, attempt+1, reply)
 
 		guess := parseGuessResponse(reply, unrevealed)
 		if guess != "" {
-			log.Printf("[LLM Operative] guess: %q", guess)
-			return guess, nil
+			reasoning := extractReason(reply)
+			log.Printf("[LLM Operative] guess: %q (reason: %s)", guess, reasoning)
+			return guess, reasoning, nil
 		}
 
 		if !mustGuess && isPassResponse(reply) {
-			log.Printf("[LLM Operative] passing on clue %q", c.Word)
-			return codenames.PassGuess, nil
+			reasoning := extractReason(reply)
+			log.Printf("[LLM Operative] passing on clue %q (reason: %s)", c.Word, reasoning)
+			return codenames.PassGuess, reasoning, nil
 		}
 
 		// Ask the model to try again with the board words emphasized.
@@ -249,7 +293,7 @@ Your guess:`, c.Word, c.Count, strings.Join(unrevealed, ", "))
 
 	// All retries failed — return empty to trigger random guess fallback.
 	log.Printf("[LLM Operative] all retries failed for clue %q, falling back", c.Word)
-	return "", nil
+	return "", "", nil
 }
 
 // isPassResponse reports whether the LLM's reply is a pass. Board-word

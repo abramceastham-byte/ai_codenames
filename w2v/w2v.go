@@ -77,6 +77,53 @@ type clueCandidate struct {
 	gloveScore float32
 }
 
+// pair is a board word and its similarity score to a clue, used when ranking
+// guesses.
+type pair struct {
+	Word       string
+	Similarity float32
+}
+
+// formatClueReasoning summarizes the top-ranked clue candidates (winner plus
+// runners-up) into a human-readable explanation of why a clue was chosen.
+func formatClueReasoning(candidates []clueCandidate) string {
+	n := 3
+	if len(candidates) < n {
+		n = len(candidates)
+	}
+	var sb strings.Builder
+	for i := 0; i < n; i++ {
+		c := candidates[i]
+		word := strings.ReplaceAll(c.word, "_", " ")
+		if i == 0 {
+			fmt.Fprintf(&sb, "Picked %q (count=%d) targeting %v — raw=%.3f final=%.3f.", word, c.count, c.combo, c.rawScore, c.finalScore)
+		} else {
+			fmt.Fprintf(&sb, " Runner-up: %q targeting %v final=%.3f.", word, c.combo, c.finalScore)
+		}
+	}
+	return sb.String()
+}
+
+// formatGuessReasoning summarizes the top-ranked guess candidates (winner
+// plus runners-up) into a human-readable explanation of why a guess was
+// chosen.
+func formatGuessReasoning(pairs []pair, clueWord string) string {
+	n := 3
+	if len(pairs) < n {
+		n = len(pairs)
+	}
+	var sb strings.Builder
+	for i := 0; i < n; i++ {
+		p := pairs[i]
+		if i == 0 {
+			fmt.Fprintf(&sb, "Picked %q (similarity=%.3f) for clue %q.", p.Word, p.Similarity, clueWord)
+		} else {
+			fmt.Fprintf(&sb, " Runner-up: %q (%.3f).", p.Word, p.Similarity)
+		}
+	}
+	return sb.String()
+}
+
 // countBonus returns a multiplier bonus for clues that target more words.
 // Higher counts get a bonus to prefer them over lower counts with similar raw scores.
 func countBonus(count int) float32 {
@@ -193,7 +240,19 @@ func candidatesToCards(candidates []clueCandidate) []codenames.Card {
 const maxCombinations = 200
 const maxCluesToConsider = 9
 
+// GiveClue implements codenames.Spymaster.
 func (ai *AI) GiveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Clue, error) {
+	clue, _, err := ai.giveClue(b, agent)
+	return clue, err
+}
+
+// GiveClueWithReasoning is like GiveClue, but also returns a human-readable
+// explanation of why the clue was chosen.
+func (ai *AI) GiveClueWithReasoning(b *codenames.Board, agent codenames.Agent) (*codenames.Clue, string, error) {
+	return ai.giveClue(b, agent)
+}
+
+func (ai *AI) giveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Clue, string, error) {
 	clueableTargets := codenames.Unrevealed(codenames.Targets(b.Cards, agent))
 	avoidTargets := codenames.Unrevealed(codenames.Targets(b.Cards, opponentAgent(agent)))
 	assassinTargets := codenames.Targets(b.Cards, codenames.Assassin)
@@ -260,7 +319,7 @@ func (ai *AI) GiveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Cl
 	gloveMap := makeEmbedMapping(ai.GloveModel, candidatesToCards(candidates))
 
 	if len(candidates) == 0 {
-		return &codenames.Clue{Word: "???", Count: 1}, nil
+		return &codenames.Clue{Word: "???", Count: 1}, "no viable clue candidates found in the search space; defaulting to placeholder", nil
 	}
 
 	// Now populate the glove scores
@@ -317,7 +376,7 @@ func (ai *AI) GiveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Cl
 	best := candidates[0]
 	word := strings.ReplaceAll(best.word, "_", " ")
 	log.Printf("My clue is %q, targetting %+v", word, best.combo)
-	return &codenames.Clue{Word: word, Count: best.count}, nil
+	return &codenames.Clue{Word: word, Count: best.count}, formatClueReasoning(candidates), nil
 }
 
 // The difference between our CosN and (*word2vec.Model).CosN is that we only
@@ -417,11 +476,17 @@ func (ai *AI) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
 // codenames.PassGuess to end the turn if even the best remaining word is a
 // poor match for the clue.
 func (ai *AI) GuessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, error) {
-	type pair struct {
-		Word       string
-		Similarity float32
-	}
+	guess, _, err := ai.guessOrPass(b, c, mustGuess)
+	return guess, err
+}
 
+// GuessOrPassWithReasoning is like GuessOrPass, but also returns a
+// human-readable explanation of why the guess (or pass) was chosen.
+func (ai *AI) GuessOrPassWithReasoning(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, string, error) {
+	return ai.guessOrPass(b, c, mustGuess)
+}
+
+func (ai *AI) guessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, string, error) {
 	guessableTargets := codenames.Unused(b.Cards)
 
 	embedMapping := makeEmbedMapping(ai.ConceptNetModel, guessableTargets, []codenames.Card{{Codename: c.Word}})
@@ -451,15 +516,16 @@ func (ai *AI) GuessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool)
 
 	// This is a crutch for when the player enters a word that isn't in the model.
 	if len(pairs) == 0 {
-		return "", nil
+		return "", "no board words or clue word found in the embedding model", nil
 	}
 
 	if !mustGuess && pairs[0].Similarity < passThreshold {
 		log.Printf("best guess %q for clue %q only scored %f, passing", pairs[0].Word, c.Word, pairs[0].Similarity)
-		return codenames.PassGuess, nil
+		reasoning := fmt.Sprintf("best guess %q for clue %q only scored %.3f, below pass threshold %.2f — passing", pairs[0].Word, c.Word, pairs[0].Similarity, passThreshold)
+		return codenames.PassGuess, reasoning, nil
 	}
 
-	return pairs[0].Word, nil
+	return pairs[0].Word, formatGuessReasoning(pairs, c.Word), nil
 }
 
 // Similarity returns a value from 0 to 1, that is the similarity of the two

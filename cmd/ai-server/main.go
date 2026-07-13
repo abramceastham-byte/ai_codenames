@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -43,6 +44,7 @@ func run(args []string) error {
 		webServerEndpoint   = fSet.String("web_server_endpoint", "", "The address to connect to the Codenames game web server")
 		ollamaEndpoint      = fSet.String("ollama_endpoint", "http://localhost:11434", "Ollama API endpoint")
 		ollamaModel         = fSet.String("ollama_model", "llama3", "Ollama model name")
+		reasoningLogPath    = fSet.String("reasoning_log_path", "logs/ai_reasoning.jsonl", "Path to JSONL file where AI reasoning for clues/guesses is logged")
 	)
 	if err := ff.Parse(fSet, args[1:], ff.WithEnvVars()); err != nil {
 		return fmt.Errorf("failed to parse flags: %w", err)
@@ -92,7 +94,16 @@ func run(args []string) error {
 
 	r := rand.New(cryptorand.NewSource())
 
-	srv := newServer(ais, def, *authSecret, *webServerEndpoint, r)
+	if err := os.MkdirAll(filepath.Dir(*reasoningLogPath), 0755); err != nil {
+		return fmt.Errorf("failed to create reasoning log dir: %w", err)
+	}
+	reasoningLog, err := os.OpenFile(*reasoningLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open reasoning log: %w", err)
+	}
+	log.Printf("Logging AI reasoning to %s", *reasoningLogPath)
+
+	srv := newServer(ais, def, *authSecret, *webServerEndpoint, r, reasoningLog)
 
 	if err := http.ListenAndServe(":8081", srv); err != nil {
 		return fmt.Errorf("error from server: %w", err)

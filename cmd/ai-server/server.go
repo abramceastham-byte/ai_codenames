@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -41,9 +42,12 @@ type Server struct {
 
 	mu            sync.Mutex
 	activePlayers map[codenames.RobotID]*activePlayer
+
+	reasoningLog *os.File
+	reasoningMu  sync.Mutex
 }
 
-func newServer(ais map[string]AI, defaultBackend, authSecret, webServerEndpoint string, r *rand.Rand) *Server {
+func newServer(ais map[string]AI, defaultBackend, authSecret, webServerEndpoint string, r *rand.Rand, reasoningLog *os.File) *Server {
 	srv := &Server{
 		ais:               ais,
 		defaultBackend:    defaultBackend,
@@ -51,9 +55,46 @@ func newServer(ais map[string]AI, defaultBackend, authSecret, webServerEndpoint 
 		webServerEndpoint: webServerEndpoint,
 		r:                 r,
 		activePlayers:     make(map[codenames.RobotID]*activePlayer),
+		reasoningLog:      reasoningLog,
 	}
 	srv.initMux()
 	return srv
+}
+
+// reasoningLogEntry is one JSONL record capturing why an AI backend picked a
+// given clue or guess, for debugging/reviewing AI decision quality after the
+// fact. It's written independently of the player-facing game log, so it can
+// be cross-referenced with logs/all_games.csv later by game_id+round+team.
+type reasoningLogEntry struct {
+	Timestamp string           `json:"timestamp"`
+	GameID    codenames.GameID `json:"game_id"`
+	Round     int              `json:"round"`
+	Team      codenames.Team   `json:"team"`
+	Role      codenames.Role   `json:"role"`
+	Backend   string           `json:"backend"`
+	Action    string           `json:"action"` // "clue" | "guess"
+	Detail    string           `json:"detail"`
+	Reasoning string           `json:"reasoning"`
+	Error     string           `json:"error,omitempty"`
+}
+
+func (s *Server) logReasoning(e reasoningLogEntry) {
+	if s.reasoningLog == nil {
+		return
+	}
+	e.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	b, err := json.Marshal(e)
+	if err != nil {
+		log.Printf("[ERROR] failed to marshal reasoning log entry: %v", err)
+		return
+	}
+	b = append(b, '\n')
+
+	s.reasoningMu.Lock()
+	defer s.reasoningMu.Unlock()
+	if _, err := s.reasoningLog.Write(b); err != nil {
+		log.Printf("[ERROR] failed to write reasoning log entry: %v", err)
+	}
 }
 
 func (s *Server) initMux() {
@@ -191,7 +232,7 @@ func (s *Server) serveJoin(w http.ResponseWriter, r *http.Request) error {
 	go func() {
 		defer s.unlockPlayer(rID)
 
-		s.playGame(ai, c, gID, rID)
+		s.playGame(ai, backendName, c, gID, rID)
 	}()
 
 	return jsonResp(w, struct {
@@ -206,12 +247,31 @@ func (s *Server) unlockPlayer(rID codenames.RobotID) {
 	s.mu.Unlock()
 }
 
-func (s *Server) playGame(ai AI, c *client.Client, gID codenames.GameID, rID codenames.RobotID) {
+// opposingTeam returns the other team.
+func opposingTeam(t codenames.Team) codenames.Team {
+	if t == codenames.RedTeam {
+		return codenames.BlueTeam
+	}
+	return codenames.RedTeam
+}
+
+func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID codenames.GameID, rID codenames.RobotID) {
 	var (
 		role     codenames.Role
 		team     codenames.Team
 		lastClue *codenames.Clue
+		// teamClueCount mirrors the frontend's round-number logic
+		// (round = max of each team's clue count), so reasoning log entries can
+		// be cross-referenced with logs/all_games.csv by game_id+round+team.
+		teamClueCount = map[codenames.Team]int{}
 	)
+
+	// predictedClueRound returns the round number a new clue from t will get
+	// once confirmed. Safe because clue-giving is turn-serialized by game
+	// rules — no other clue event can land before this one is confirmed.
+	predictedClueRound := func(t codenames.Team) int {
+		return max(teamClueCount[t]+1, teamClueCount[opposingTeam(t)])
+	}
 
 	err := c.ListenForUpdates(gID, client.WSHooks{
 		OnConnect: func() {
@@ -228,7 +288,8 @@ func (s *Server) playGame(ai AI, c *client.Client, gID codenames.GameID, rID cod
 			}
 
 			if role == codenames.SpymasterRole && gs.Game.State.ActiveTeam == team {
-				clue, err := s.giveClue(ai, gs.Game.State.Board, toAgent(team))
+				rc := reasoningCtx{gameID: gID, backend: backendName, team: team, round: predictedClueRound(team)}
+				clue, err := s.giveClue(ai, gs.Game.State.Board, toAgent(team), rc)
 				if err != nil {
 					log.Printf("[ERROR] failed to make a clue: %v", err)
 					return
@@ -241,6 +302,8 @@ func (s *Server) playGame(ai AI, c *client.Client, gID codenames.GameID, rID cod
 			}
 		},
 		OnClueGiven: func(cg *msgs.ClueGiven) {
+			teamClueCount[cg.Team]++
+
 			if cg.Team == team {
 				lastClue = cg.Clue
 			}
@@ -251,7 +314,9 @@ func (s *Server) playGame(ai AI, c *client.Client, gID codenames.GameID, rID cod
 			}
 			log.Printf("Clue %q was given, and I'm guessing!", cg.Clue)
 
-			guess, err := s.guess(ai, cg.Game.State.Board, cg.Clue, true /* mustGuess */)
+			round := max(teamClueCount[codenames.RedTeam], teamClueCount[codenames.BlueTeam])
+			rc := reasoningCtx{gameID: gID, backend: backendName, team: team, round: round}
+			guess, err := s.guess(ai, cg.Game.State.Board, cg.Clue, true /* mustGuess */, rc)
 			if err != nil {
 				log.Printf("[ERROR] failed to make a guess for clue %+v: %v", cg.Clue, err)
 				return
@@ -267,7 +332,8 @@ func (s *Server) playGame(ai AI, c *client.Client, gID codenames.GameID, rID cod
 			// finished guessing.
 			if gg.Team != team && !gg.CanKeepGuessing && role == codenames.SpymasterRole {
 
-				clue, err := s.giveClue(ai, gg.Game.State.Board, toAgent(team))
+				rc := reasoningCtx{gameID: gID, backend: backendName, team: team, round: predictedClueRound(team)}
+				clue, err := s.giveClue(ai, gg.Game.State.Board, toAgent(team), rc)
 				if err != nil {
 					log.Printf("[ERROR] failed to make a clue: %v", err)
 					return
@@ -282,7 +348,9 @@ func (s *Server) playGame(ai AI, c *client.Client, gID codenames.GameID, rID cod
 			}
 
 			if gg.Team == team && gg.CanKeepGuessing && role == codenames.OperativeRole {
-				guess, err := s.guess(ai, gg.Game.State.Board, lastClue, false /* mustGuess */)
+				round := max(teamClueCount[codenames.RedTeam], teamClueCount[codenames.BlueTeam])
+				rc := reasoningCtx{gameID: gID, backend: backendName, team: team, round: round}
+				guess, err := s.guess(ai, gg.Game.State.Board, lastClue, false /* mustGuess */, rc)
 				if err != nil {
 					log.Printf("[ERROR] failed to make a guess for clue %+v: %v", lastClue, err)
 					return
@@ -302,9 +370,34 @@ func (s *Server) playGame(ai AI, c *client.Client, gID codenames.GameID, rID cod
 	}
 }
 
-func (s *Server) giveClue(ai AI, b *codenames.Board, agent codenames.Agent) (*codenames.Clue, error) {
+// reasoningCtx carries the context needed to log why an AI backend picked a
+// given clue/guess, without bloating giveClue/guess's parameter lists.
+type reasoningCtx struct {
+	gameID  codenames.GameID
+	backend string
+	team    codenames.Team
+	round   int
+}
+
+// reasoningSpymaster is implemented by AI backends that can explain why they
+// picked a given clue.
+type reasoningSpymaster interface {
+	GiveClueWithReasoning(b *codenames.Board, agent codenames.Agent) (*codenames.Clue, string, error)
+}
+
+func (s *Server) giveClue(ai AI, b *codenames.Board, agent codenames.Agent, rc reasoningCtx) (*codenames.Clue, error) {
 	start := time.Now()
-	clue, err := ai.GiveClue(b, agent)
+
+	var (
+		clue      *codenames.Clue
+		reasoning string
+		err       error
+	)
+	if rs, ok := ai.(reasoningSpymaster); ok {
+		clue, reasoning, err = rs.GiveClueWithReasoning(b, agent)
+	} else {
+		clue, err = ai.GiveClue(b, agent)
+	}
 	if err != nil {
 		log.Printf("[ERROR] AI failed to make a clue: %v", err)
 		clue = &codenames.Clue{
@@ -313,8 +406,29 @@ func (s *Server) giveClue(ai AI, b *codenames.Board, agent codenames.Agent) (*co
 		}
 	}
 
+	s.logReasoning(reasoningLogEntry{
+		GameID:    rc.gameID,
+		Round:     rc.round,
+		Team:      rc.team,
+		Role:      codenames.SpymasterRole,
+		Backend:   rc.backend,
+		Action:    "clue",
+		Detail:    clue.String(),
+		Reasoning: reasoning,
+		Error:     errString(err),
+	})
+
 	humanThinkDelay(start, 8*time.Second, 25*time.Second)
 	return clue, nil
+}
+
+// errString returns "" for a nil error, and err.Error() otherwise — handy for
+// putting an optional error into a log entry.
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // humanThinkDelay sleeps until the total time elapsed since start falls
@@ -343,21 +457,44 @@ type passingOperative interface {
 	GuessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, error)
 }
 
+// reasoningOperative is implemented by AI backends that can both decline to
+// guess and explain why they picked a given guess (or pass).
+type reasoningOperative interface {
+	GuessOrPassWithReasoning(b *codenames.Board, c *codenames.Clue, mustGuess bool) (guess string, reasoning string, err error)
+}
+
 // guess asks the AI for a guess. mustGuess is true on the first guess after a
 // clue — Codenames requires at least one guess per clue — and false on
 // follow-up guesses, where the AI may pass. A pass is sent to the web server
 // as an empty guess, which ends the turn.
-func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue, mustGuess bool) (string, error) {
+func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue, mustGuess bool, rc reasoningCtx) (string, error) {
 	start := time.Now()
 	var (
-		guess string
-		err   error
+		guess     string
+		reasoning string
+		err       error
 	)
-	if po, ok := ai.(passingOperative); ok {
-		guess, err = po.GuessOrPass(b, clue, mustGuess)
-	} else {
+	switch v := ai.(type) {
+	case reasoningOperative:
+		guess, reasoning, err = v.GuessOrPassWithReasoning(b, clue, mustGuess)
+	case passingOperative:
+		guess, err = v.GuessOrPass(b, clue, mustGuess)
+	default:
 		guess, err = ai.Guess(b, clue)
 	}
+
+	s.logReasoning(reasoningLogEntry{
+		GameID:    rc.gameID,
+		Round:     rc.round,
+		Team:      rc.team,
+		Role:      codenames.OperativeRole,
+		Backend:   rc.backend,
+		Action:    "guess",
+		Detail:    guess,
+		Reasoning: reasoning,
+		Error:     errString(err),
+	})
+
 	if err != nil || guess == "" {
 		log.Printf("[ERROR] AI failed to make a guess: %v", err)
 		guess, err = s.guessRandomly(b)
