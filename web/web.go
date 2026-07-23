@@ -32,20 +32,21 @@ const (
 )
 
 type Srv struct {
-	sc        *securecookie.SecureCookie
-	hub       *hub.Hub
-	mux       *mux.Router
-	db        codenames.DB
-	r         *rand.Rand
-	ws        *websocket.Upgrader
-	consensus *consensus.Guesser
-	ai        *aiclient.Client
-	logDir    string
-	genName   func() string
+	sc          *securecookie.SecureCookie
+	hub         *hub.Hub
+	mux         *mux.Router
+	db          codenames.DB
+	r           *rand.Rand
+	ws          *websocket.Upgrader
+	consensus   *consensus.Guesser
+	ai          *aiclient.Client
+	logDir      string
+	genName     func() string
+	adminSecret string
 }
 
 // New returns an initialized server.
-func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aiclient.Client, logDir string) *Srv {
+func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aiclient.Client, logDir, adminSecret string) *Srv {
 	s := &Srv{
 		sc:  sc,
 		hub: hub.New(),
@@ -56,10 +57,11 @@ func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aicli
 				return true
 			},
 		},
-		consensus: consensus.New(),
-		ai:        ai,
-		logDir:    logDir,
-		genName:   names.Random,
+		consensus:   consensus.New(),
+		ai:          ai,
+		logDir:      logDir,
+		genName:     names.Random,
+		adminSecret: adminSecret,
 	}
 
 	s.mux = s.initMux()
@@ -178,6 +180,12 @@ func (s *Srv) initMux() *mux.Router {
 			path:        "/api/game/{id}/log",
 			method:      http.MethodPost,
 			handlerFunc: s.requireGameAuth(s.serveGameLog),
+		},
+		// Admin-only: view AI reasoning + player types for a game.
+		{
+			path:        "/api/admin/game/{id}/log",
+			method:      http.MethodGet,
+			handlerFunc: s.requireAdmin(s.serveAdminGameLog),
 		},
 	}
 
@@ -837,6 +845,13 @@ func (s *Srv) finishAssigningRoles(game *codenames.Game, prs []*codenames.Player
 	return len(unassigned) > 0, nil
 }
 
+// sanitizePlayerID strips the human/robot distinction from a PlayerID before
+// it's sent to players, so that clients have no way to tell who is an AI.
+// This information is only ever exposed via the admin-only reasoning log.
+func sanitizePlayerID(id codenames.PlayerID) codenames.PlayerID {
+	return codenames.PlayerID{PlayerType: codenames.UnknownPlayerType, ID: id.ID}
+}
+
 func (s *Srv) toPlayers(prs []*codenames.PlayerRole) ([]*msgs.Player, error) {
 	var ids []codenames.PlayerID
 	for _, pr := range prs {
@@ -855,7 +870,7 @@ func (s *Srv) toPlayers(prs []*codenames.PlayerRole) ([]*msgs.Player, error) {
 			return nil, fmt.Errorf("no name was returned for player ID %q", pr.PlayerID)
 		}
 		out = append(out, &msgs.Player{
-			PlayerID: pr.PlayerID,
+			PlayerID: sanitizePlayerID(pr.PlayerID),
 			Name:     name,
 			Team:     pr.Team,
 			Role:     pr.Role,
@@ -981,7 +996,7 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 	}
 
 	if err := s.hub.ToGame(g.ID, &msgs.PlayerVote{
-		PlayerID:  p.ID,
+		PlayerID:  sanitizePlayerID(p.ID),
 		Guess:     req.Guess,
 		Confirmed: req.Confirmed,
 	}); err != nil {
@@ -1310,6 +1325,87 @@ func findRole(pID codenames.PlayerID, prs []*codenames.PlayerRole) (*codenames.P
 		}
 	}
 	return nil, false
+}
+
+// requireAdmin gates a handler behind the ADMIN_SECRET shared secret,
+// checked via the X-Admin-Secret header or an admin_secret query param.
+// This is intentionally the same shared-secret trust model as AUTH_SECRET
+// (no accounts) — it exists solely so a developer can review AI reasoning
+// and player types after a game, without any of that ever reaching players.
+func (s *Srv) requireAdmin(handler handlerFunc) handlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		if s.adminSecret == "" {
+			return httperr.Forbidden("admin endpoints are disabled").WithMessage("admin endpoints are disabled")
+		}
+		got := r.Header.Get("X-Admin-Secret")
+		if got == "" {
+			got = r.URL.Query().Get("admin_secret")
+		}
+		if got != s.adminSecret {
+			return httperr.Forbidden("bad admin secret on request to %q", r.URL.Path).WithMessage("invalid admin secret")
+		}
+		return handler(w, r)
+	}
+}
+
+// adminPlayer is a player as reported to an admin — unlike msgs.Player, it
+// intentionally includes the real player type and, when available, which AI
+// backend the player used.
+type adminPlayer struct {
+	PlayerID codenames.PlayerID `json:"player_id"`
+	Name     string             `json:"name"`
+	Team     codenames.Team     `json:"team"`
+	Role     codenames.Role     `json:"role"`
+	Backend  string             `json:"backend,omitempty"`
+}
+
+func (s *Srv) serveAdminGameLog(w http.ResponseWriter, r *http.Request) error {
+	gID, err := s.gameIDFromRequest(r)
+	if err != nil {
+		return err
+	}
+
+	prs, err := s.db.PlayersInGame(gID)
+	if err != nil {
+		return httperr.Internal("failed to load players in game %q: %w", gID, err).WithMessage("failed to load players in game")
+	}
+
+	var ids []codenames.PlayerID
+	for _, pr := range prs {
+		ids = append(ids, pr.PlayerID)
+	}
+	names, err := s.db.BatchPlayerNames(ids)
+	if err != nil {
+		return httperr.Internal("failed to load player names: %w", err).WithMessage("failed to load player names")
+	}
+
+	entries, err := s.ai.GetReasoning(gID)
+	if err != nil {
+		return httperr.Internal("failed to fetch AI reasoning: %w", err).WithMessage("failed to fetch AI reasoning")
+	}
+
+	// Figure out which backend each team/role used, from whatever reasoning
+	// entries exist for them (there won't be any for human players).
+	backendFor := make(map[string]string) // "TEAM:ROLE" -> backend
+	for _, e := range entries {
+		backendFor[string(e.Team)+":"+string(e.Role)] = e.Backend
+	}
+
+	var players []*adminPlayer
+	for _, pr := range prs {
+		players = append(players, &adminPlayer{
+			PlayerID: pr.PlayerID,
+			Name:     names[pr.PlayerID],
+			Team:     pr.Team,
+			Role:     pr.Role,
+			Backend:  backendFor[string(pr.Team)+":"+string(pr.Role)],
+		})
+	}
+
+	return jsonResp(w, struct {
+		Players   []*adminPlayer            `json:"players"`
+		Reasoning []aiclient.ReasoningEntry `json:"reasoning"`
+	}{players, entries})
 }
 
 func (s *Srv) gameIDFromRequest(r *http.Request) (codenames.GameID, error) {

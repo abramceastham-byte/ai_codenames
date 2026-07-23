@@ -97,4 +97,49 @@ export class Api {
 	async saveLog(gameId: string, entries: unknown[]): Promise<{ path: string }> {
 		return this.post(`/api/game/${gameId}/log`, { entries });
 	}
+
+	async getAdminGameLog(gameId: string, adminSecret: string): Promise<AdminGameLog> {
+		const res = await this.fetch(`${PUBLIC_API_URL}/api/admin/game/${gameId}/log`, {
+			credentials: 'include',
+			headers: { 'X-Admin-Secret': adminSecret }
+		});
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(text || res.statusText);
+		}
+		return res.json();
+	}
+}
+
+// AdminPlayerID is distinct from the player-facing PlayerID type: the admin
+// endpoint is the one place player_type is legitimately sent over the wire.
+export interface AdminPlayerID {
+	player_type: string;
+	id: string;
+}
+
+export interface AdminPlayer {
+	player_id: AdminPlayerID;
+	name: string;
+	team: Team;
+	role: Role;
+	backend?: string;
+}
+
+export interface AdminReasoningEntry {
+	timestamp: string;
+	game_id: string;
+	round: number;
+	team: Team;
+	role: Role;
+	backend: string;
+	action: 'clue' | 'guess';
+	detail: string;
+	reasoning: string;
+	error?: string;
+}
+
+export interface AdminGameLog {
+	players: AdminPlayer[];
+	reasoning: AdminReasoningEntry[];
 }

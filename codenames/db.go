@@ -367,19 +367,11 @@ func RandomPlayerID(r *rand.Rand) string {
 }
 
 func RandomUserID(r *rand.Rand) UserID {
-	b := make([]byte, 16)
-	for i := range b {
-		b[i] = letters[r.Intn(len(letters))]
-	}
-	return UserID("human_" + string(b))
+	return UserID(RandomPlayerID(r))
 }
 
 func RandomRobotID(r *rand.Rand) RobotID {
-	b := make([]byte, 16)
-	for i := range b {
-		b[i] = letters[r.Intn(len(letters))]
-	}
-	return RobotID("robot_" + string(b))
+	return RobotID(RandomPlayerID(r))
 }
 
 var c = cases.Title(language.English)

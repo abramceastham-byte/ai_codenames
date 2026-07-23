@@ -10,7 +10,6 @@ export const AGENT_BYSTANDER = 3;
 export const AGENT_ASSASSIN = 4;
 
 export interface PlayerID {
-	player_type: string;
 	id: string;
 }
 
@@ -113,7 +112,6 @@ export interface LogEntry {
 	type: 'clue' | 'guess';
 	detail: string;
 	result: string; // 'red' | 'blue' | 'bystander' | 'assassin' | '' for clues
-	model: string;  // 'w2v' | 'llm' | 'human'
 	durationMs: number;
 }
 

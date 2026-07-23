@@ -4,25 +4,37 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bcspragu/Codenames/codenames"
 )
+
+// DefaultTimeout bounds a single Ollama call (and the total budget across
+// retries) so a slow model can't make an AI player wait far longer than the
+// human-mimicking delay window applied by the caller.
+const DefaultTimeout = 20 * time.Second
 
 // AI implements codenames.Spymaster and codenames.Operative using a local
 // Ollama model.
 type AI struct {
 	endpoint string // e.g. "http://localhost:11434"
 	model    string // e.g. "llama3"
+	timeout  time.Duration
 }
 
-func New(endpoint, model string) *AI {
-	return &AI{endpoint: endpoint, model: model}
+func New(endpoint, model string, timeout time.Duration) *AI {
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	return &AI{endpoint: endpoint, model: model, timeout: timeout}
 }
 
 // Ollama chat API types
@@ -42,7 +54,7 @@ type chatResponse struct {
 	Message chatMessage `json:"message"`
 }
 
-func (ai *AI) chat(messages []chatMessage) (string, error) {
+func (ai *AI) chat(ctx context.Context, messages []chatMessage) (string, error) {
 	body, err := json.Marshal(chatRequest{
 		Model:    ai.model,
 		Messages: messages,
@@ -52,7 +64,13 @@ func (ai *AI) chat(messages []chatMessage) (string, error) {
 		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, err := http.Post(ai.endpoint+"/api/chat", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ai.endpoint+"/api/chat", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("ollama request: %w", err)
 	}
@@ -148,7 +166,10 @@ Give your clue:`, teamName,
 		strings.Join(bystanders, ", "),
 		strings.Join(assassin, ", "))
 
-	reply, err := ai.chat([]chatMessage{
+	ctx, cancel := context.WithTimeout(context.Background(), ai.timeout)
+	defer cancel()
+
+	reply, err := ai.chat(ctx, []chatMessage{
 		{Role: "system", Content: system},
 		{Role: "user", Content: prompt},
 	})
@@ -262,10 +283,24 @@ Your guess:`, c.Word, c.Count, strings.Join(unrevealed, ", "))
 		{Role: "user", Content: prompt},
 	}
 
+	// All retries share one timeout budget, so a slow model can't multiply
+	// the wait by re-trying — worst case is still one bounded wait, after
+	// which we fall back to a random legal guess. Guesses get a tighter
+	// budget than clues so they comfortably fit under the shorter
+	// human-think delay ceiling applied to guesses (see humanThinkDelay in
+	// cmd/ai-server/server.go).
+	guessBudget := min(ai.timeout, 12*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), guessBudget)
+	defer cancel()
+
 	// Try up to 3 times to get a valid board word.
 	for attempt := range 3 {
-		reply, err := ai.chat(messages)
+		reply, err := ai.chat(ctx, messages)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				log.Printf("[LLM Operative] clue=%q timed out after attempt=%d, falling back", c.Word, attempt+1)
+				return "", "", nil
+			}
 			return "", "", fmt.Errorf("llm chat: %w", err)
 		}
 

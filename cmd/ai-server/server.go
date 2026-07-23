@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
@@ -43,11 +45,12 @@ type Server struct {
 	mu            sync.Mutex
 	activePlayers map[codenames.RobotID]*activePlayer
 
-	reasoningLog *os.File
-	reasoningMu  sync.Mutex
+	reasoningLog     *os.File
+	reasoningLogPath string
+	reasoningMu      sync.Mutex
 }
 
-func newServer(ais map[string]AI, defaultBackend, authSecret, webServerEndpoint string, r *rand.Rand, reasoningLog *os.File) *Server {
+func newServer(ais map[string]AI, defaultBackend, authSecret, webServerEndpoint string, r *rand.Rand, reasoningLog *os.File, reasoningLogPath string) *Server {
 	srv := &Server{
 		ais:               ais,
 		defaultBackend:    defaultBackend,
@@ -56,6 +59,7 @@ func newServer(ais map[string]AI, defaultBackend, authSecret, webServerEndpoint 
 		r:                 r,
 		activePlayers:     make(map[codenames.RobotID]*activePlayer),
 		reasoningLog:      reasoningLog,
+		reasoningLogPath:  reasoningLogPath,
 	}
 	srv.initMux()
 	return srv
@@ -101,7 +105,77 @@ func (s *Server) initMux() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/join", s.handleError(s.serveJoin))
 	mux.HandleFunc("/backends", s.handleError(s.serveBackends))
+	mux.HandleFunc("/reasoning", s.handleError(s.serveReasoning))
 	s.mux = mux
+}
+
+// serveReasoning returns the logged AI reasoning entries for a single game.
+// It's only ever called server-to-server by the web server's admin-gated
+// endpoint (see web/web.go), never directly by a browser, so it reuses the
+// same shared-secret auth as /join and /backends.
+func (s *Server) serveReasoning(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != http.MethodGet {
+		return httperr.MethodNotAllowed("call to reasoning with bad method %q", r.Method)
+	}
+	if r.Header.Get("Authorization") != s.authSecret {
+		return httperr.Forbidden("bad auth on reasoning request").WithMessage("invalid auth")
+	}
+
+	gID := codenames.GameID(r.URL.Query().Get("game_id"))
+	if gID == "" {
+		return httperr.BadRequest("no game_id given").WithMessage("no game_id given")
+	}
+
+	entries, err := s.reasoningForGame(gID)
+	if err != nil {
+		return httperr.Internal("failed to read reasoning log: %w", err)
+	}
+
+	return jsonResp(w, struct {
+		Entries []reasoningLogEntry `json:"entries"`
+	}{entries})
+}
+
+// reasoningForGame scans the reasoning log file for entries belonging to
+// gID. The log is small (per-deployment, dev/small-scale usage), so a full
+// scan per request is acceptable and avoids needing an index.
+func (s *Server) reasoningForGame(gID codenames.GameID) ([]reasoningLogEntry, error) {
+	if s.reasoningLogPath == "" {
+		return nil, nil
+	}
+
+	f, err := os.Open(s.reasoningLogPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open reasoning log: %w", err)
+	}
+	defer f.Close()
+
+	var entries []reasoningLogEntry
+	scanner := bufio.NewScanner(f)
+	// Reasoning text can be long; grow the buffer past bufio's 64KB default.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var e reasoningLogEntry
+		if err := json.Unmarshal(line, &e); err != nil {
+			log.Printf("[ERROR] failed to parse reasoning log line: %v", err)
+			continue
+		}
+		if e.GameID == gID {
+			entries = append(entries, e)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan reasoning log: %w", err)
+	}
+
+	return entries, nil
 }
 
 func (s *Server) serveBackends(w http.ResponseWriter, r *http.Request) error {

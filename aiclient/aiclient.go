@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/bcspragu/Codenames/codenames"
@@ -69,6 +70,40 @@ func (c *Client) Backends() (*Backends, error) {
 		return nil, fmt.Errorf("failed to fetch AI backends: %w", err)
 	}
 	return &resp, nil
+}
+
+// ReasoningEntry mirrors the ai-server's internal reasoningLogEntry shape —
+// one record of why an AI backend picked a given clue or guess.
+type ReasoningEntry struct {
+	Timestamp string           `json:"timestamp"`
+	GameID    codenames.GameID `json:"game_id"`
+	Round     int              `json:"round"`
+	Team      codenames.Team   `json:"team"`
+	Role      codenames.Role   `json:"role"`
+	Backend   string           `json:"backend"`
+	Action    string           `json:"action"`
+	Detail    string           `json:"detail"`
+	Reasoning string           `json:"reasoning"`
+	Error     string           `json:"error,omitempty"`
+}
+
+// GetReasoning fetches the logged AI reasoning entries for a single game.
+// Intended for an admin-only view — never call this on behalf of a
+// player-facing request.
+func (c *Client) GetReasoning(gID codenames.GameID) ([]ReasoningEntry, error) {
+	req, err := http.NewRequest(http.MethodGet, c.endpoint+"/reasoning?game_id="+url.QueryEscape(string(gID)), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to form request: %w", err)
+	}
+	req.Header.Set("Authorization", c.secret)
+
+	var resp struct {
+		Entries []ReasoningEntry `json:"entries"`
+	}
+	if err := c.do(req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to fetch AI reasoning: %w", err)
+	}
+	return resp.Entries, nil
 }
 
 func (c *Client) do(req *http.Request, resp any) error {

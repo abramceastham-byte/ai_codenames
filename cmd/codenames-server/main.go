@@ -46,6 +46,7 @@ func run(args []string) error {
 		authSecret       = fSet.String("auth_secret", "", "Secret string that acts as a 'password' for communicating with the AI server")
 		aiServerEndpoint = fSet.String("ai_server_endpoint", "", "The address to connect to the Codenames AI server")
 		logDir           = fSet.String("log_dir", "logs", "Directory to save game logs (CSV) after each game")
+		adminSecret      = fSet.String("admin_secret", "", "Secret string required (via X-Admin-Secret header or admin_secret query param) to access admin-only endpoints like the AI reasoning log. Admin endpoints are disabled if unset.")
 	)
 	if err := ff.Parse(fSet, args[1:], ff.WithEnvVars()); err != nil {
 		return fmt.Errorf("failed to parse flags: %w", err)
@@ -78,7 +79,7 @@ func run(args []string) error {
 
 	log.Printf("Server is running on %q", *addr)
 
-	webSrv := web.New(db, r, sc, ai, *logDir)
+	webSrv := web.New(db, r, sc, ai, *logDir, *adminSecret)
 	corsCfg := cors.New(cors.Options{
 		AllowOriginFunc: func(origin string) bool {
 			return true

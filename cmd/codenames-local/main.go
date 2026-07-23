@@ -88,7 +88,7 @@ func main() {
 			}
 			sm, op = ai, ai
 		case "llm":
-			ai := llm.New(*ollamaEndpoint, *ollamaModel)
+			ai := llm.New(*ollamaEndpoint, *ollamaModel, llm.DefaultTimeout)
 			sm, op = ai, ai
 		default:
 			log.Fatalf("Unknown AI backend %q, must be 'w2v' or 'llm'", *aiBackend)

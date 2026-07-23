@@ -133,8 +133,11 @@ func TestBasicallyEverything(t *testing.T) {
 	env.startGame(t, gID, 1)
 }
 
+// human returns the PlayerID as it should appear on the wire in
+// player-facing messages, where the human/robot distinction is stripped to
+// avoid revealing which players are AI.
 func human(uID codenames.UserID) codenames.PlayerID {
-	return uID.AsPlayerID()
+	return sanitizePlayerID(uID.AsPlayerID())
 }
 
 // startingBoardCards returns the cards we expect on the test board, since we
@@ -344,6 +347,7 @@ func setup() *testEnv {
 		setupCookies(),
 		nil, /* AI client, not used yet */
 		"",  /* logDir, not used in tests */
+		"",  /* adminSecret, not used in tests */
 	)
 
 	// The server assigns every player a generated name. Make them

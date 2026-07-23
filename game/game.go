@@ -174,12 +174,11 @@ func (g *Game) handleGiveClue(clue *codenames.Clue) {
 }
 
 func (g *Game) handleGuess(guess string) error {
-	g.state.NumGuessesLeft--
-
 	c, err := g.reveal(guess)
 	if err != nil {
 		return fmt.Errorf("reveal(%q) on %q: %v", guess, g.state.ActiveTeam, err)
 	}
+	g.state.NumGuessesLeft--
 
 	// Check if their guess ended the game.
 	if over, _ := g.GameOver(); over {

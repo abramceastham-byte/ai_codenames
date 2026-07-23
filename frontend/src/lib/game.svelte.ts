@@ -138,7 +138,10 @@ export class GameStore {
 					this.lastClue = { ...msg.clue, team: msg.team };
 				}
 				this._teamClueCount[msg.team] = (this._teamClueCount[msg.team] ?? 0) + 1;
-				const clueRound = Math.max(this._teamClueCount['RED'] ?? 0, this._teamClueCount['BLUE'] ?? 0);
+				const clueRound = Math.max(
+					this._teamClueCount['RED'] ?? 0,
+					this._teamClueCount['BLUE'] ?? 0
+				);
 				this.history = [
 					...this.history,
 					{
@@ -147,7 +150,6 @@ export class GameStore {
 						type: 'clue',
 						detail: `${msg.clue.word} (${msg.clue.count})`,
 						result: '',
-						model: this._modelForTeamRole(msg.team, 'SPYMASTER'),
 						durationMs: duration
 					}
 				];
@@ -165,7 +167,6 @@ export class GameStore {
 						type: 'guess',
 						detail: msg.guess || '(pass)',
 						result: this._agentToResult(msg.card?.agent),
-						model: this._modelForTeamRole(msg.team, 'OPERATIVE'),
 						durationMs: duration
 					}
 				];
@@ -187,22 +188,18 @@ export class GameStore {
 		}
 	}
 
-	private _modelForTeamRole(team: Team, role: 'SPYMASTER' | 'OPERATIVE'): string {
-		const player = this.players.find((p) => p.team === team && p.role === role);
-		if (!player) return 'unknown';
-		const name = player.name.toUpperCase();
-		if (name.startsWith('W2V')) return 'w2v';
-		if (name.startsWith('LLM')) return 'llm';
-		return 'human';
-	}
-
 	private _agentToResult(agent: number | undefined): string {
 		switch (agent) {
-			case AGENT_RED: return 'red';
-			case AGENT_BLUE: return 'blue';
-			case AGENT_BYSTANDER: return 'bystander';
-			case AGENT_ASSASSIN: return 'assassin';
-			default: return '';
+			case AGENT_RED:
+				return 'red';
+			case AGENT_BLUE:
+				return 'blue';
+			case AGENT_BYSTANDER:
+				return 'bystander';
+			case AGENT_ASSASSIN:
+				return 'assassin';
+			default:
+				return '';
 		}
 	}
 

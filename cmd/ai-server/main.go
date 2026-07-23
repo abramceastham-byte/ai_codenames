@@ -44,6 +44,7 @@ func run(args []string) error {
 		webServerEndpoint   = fSet.String("web_server_endpoint", "", "The address to connect to the Codenames game web server")
 		ollamaEndpoint      = fSet.String("ollama_endpoint", "http://localhost:11434", "Ollama API endpoint")
 		ollamaModel         = fSet.String("ollama_model", "llama3", "Ollama model name")
+		ollamaTimeout       = fSet.Duration("ollama_timeout", llm.DefaultTimeout, "Max time to wait for an Ollama call (and total budget across guess retries) before falling back to a random legal move")
 		reasoningLogPath    = fSet.String("reasoning_log_path", "logs/ai_reasoning.jsonl", "Path to JSONL file where AI reasoning for clues/guesses is logged")
 	)
 	if err := ff.Parse(fSet, args[1:], ff.WithEnvVars()); err != nil {
@@ -72,8 +73,8 @@ func run(args []string) error {
 			}
 			ais["w2v"] = w2vAI
 		case "llm":
-			log.Printf("Loading LLM backend via Ollama at %s with model %s", *ollamaEndpoint, *ollamaModel)
-			ais["llm"] = llm.New(*ollamaEndpoint, *ollamaModel)
+			log.Printf("Loading LLM backend via Ollama at %s with model %s (timeout %s)", *ollamaEndpoint, *ollamaModel, *ollamaTimeout)
+			ais["llm"] = llm.New(*ollamaEndpoint, *ollamaModel, *ollamaTimeout)
 		default:
 			return fmt.Errorf("unknown backend %q in --enabled_backends", name)
 		}
@@ -103,7 +104,7 @@ func run(args []string) error {
 	}
 	log.Printf("Logging AI reasoning to %s", *reasoningLogPath)
 
-	srv := newServer(ais, def, *authSecret, *webServerEndpoint, r, reasoningLog)
+	srv := newServer(ais, def, *authSecret, *webServerEndpoint, r, reasoningLog, *reasoningLogPath)
 
 	if err := http.ListenAndServe(":8081", srv); err != nil {
 		return fmt.Errorf("error from server: %w", err)
