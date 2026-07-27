@@ -139,6 +139,12 @@ func (s *Srv) initMux() *mux.Router {
 			method:      http.MethodPost,
 			handlerFunc: s.requireGameAuth(s.serveRequestAI, isGameCreator(), isGamePending()),
 		},
+		// Remove a player (typically a misplaced AI) from a pending game.
+		{
+			path:        "/api/game/{id}/removePlayer",
+			method:      http.MethodPost,
+			handlerFunc: s.requireGameAuth(s.serveRemovePlayer, isGameCreator(), isGamePending()),
+		},
 		// Join game.
 		{
 			path:        "/api/game/{id}/join",
@@ -520,6 +526,80 @@ func (s *Srv) serveRequestAI(w http.ResponseWriter, r *http.Request, creator *co
 		Success bool   `json:"success"`
 		RobotID string `json:"robot_id"`
 	}{true, string(robotID)})
+}
+
+func (s *Srv) serveRemovePlayer(w http.ResponseWriter, r *http.Request, p *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
+	var req struct {
+		PlayerID string `json:"player_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return httperr.BadRequest("failed to decode remove player request: %w", err)
+	}
+
+	if req.PlayerID == "" {
+		return httperr.
+			BadRequest("no player ID given in remove request for game %q", game.ID).
+			WithMessage("no player given")
+	}
+
+	// Player-facing messages have the human/robot distinction stripped, so the
+	// client only knows the opaque ID. Find the roster entry it refers to, which
+	// gets us back the fully-qualified PlayerID the DB needs.
+	var target *codenames.PlayerRole
+	for _, pr := range prs {
+		if pr.PlayerID.SameID(req.PlayerID) {
+			target = pr
+			break
+		}
+	}
+	if target == nil {
+		return httperr.
+			BadRequest("player %q isn't in game %q", req.PlayerID, game.ID).
+			WithMessage("that player isn't in this game")
+	}
+
+	// The creator drives the lobby, and several handlers assume they're around,
+	// so don't let them remove themselves out of their own game.
+	if target.PlayerID.SameID(string(game.CreatedBy)) {
+		return httperr.
+			BadRequest("user %q tried to remove the creator from game %q", p.ID, game.ID).
+			WithMessage("you can't remove the game's creator")
+	}
+
+	if err := s.db.RemovePlayer(game.ID, target.PlayerID); err != nil {
+		return httperr.
+			Internal("failed to remove player %q from game %q: %w", req.PlayerID, game.ID, err).
+			WithMessage("failed to remove player")
+	}
+
+	// Drop their WebSocket. For an AI this is the signal to stop playing: the
+	// robot's read loop fails and its goroutine on the AI server unwinds.
+	s.hub.Disconnect(game.ID, target.PlayerID)
+
+	newPRS, err := s.db.PlayersInGame(game.ID)
+	if err != nil {
+		return httperr.
+			Internal("failed to load players in game %q: %w", game.ID, err).
+			WithMessage("failed to load players in game")
+	}
+
+	players, err := s.toPlayers(newPRS)
+	if err != nil {
+		return httperr.
+			Internal("failed to convert players in game %q: %w", game.ID, err).
+			WithMessage("failed to make players")
+	}
+
+	if err := s.broadcastMessage(game, newPRS, func(g *codenames.Game) any {
+		return &msgs.RoleAssigned{
+			Players: players,
+		}
+	}); err != nil {
+		log.Printf("failed to send message for player removal: %v", err)
+	}
+
+	return jsonResp(w, players)
 }
 
 func (s *Srv) serveGamePlayers(w http.ResponseWriter, r *http.Request, p *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {

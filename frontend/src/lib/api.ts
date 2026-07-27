@@ -71,6 +71,10 @@ export class Api {
 		});
 	}
 
+	async removePlayer(gameId: string, playerId: string): Promise<Player[]> {
+		return this.post(`/api/game/${gameId}/removePlayer`, { player_id: playerId });
+	}
+
 	async getAIBackends(): Promise<{ backends: string[]; default: string }> {
 		return this.get('/api/ai/backends');
 	}

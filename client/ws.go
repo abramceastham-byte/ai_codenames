@@ -102,6 +102,10 @@ func (ws *wsClient) handleMessages() {
 				ws.handleGuessGiven(msg)
 			case "GAME_END":
 				ws.handleGameEnd(msg)
+			case "ROLE_ASSIGNED":
+				// Expected during the lobby phase, but roles are read off
+				// GAME_START instead, so there's nothing to do. Ignored
+				// explicitly so it doesn't look like an error in the logs.
 			default:
 				log.Printf("unknown message action %q", justAction.Action)
 			}

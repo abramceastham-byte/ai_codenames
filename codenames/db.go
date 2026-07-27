@@ -69,6 +69,16 @@ func (p PlayerID) IsRobot(rID RobotID) bool {
 	return p.PlayerType == PlayerTypeRobot && p.ID == string(rID)
 }
 
+// SameID reports whether p refers to the same player as rawID, comparing only
+// the opaque ID. Player-facing messages have the human/robot distinction
+// stripped (see sanitizePlayerID in the web package), so IsUser/IsRobot never
+// match against an ID that came off the wire — use this instead there. IDs are
+// drawn from a single random space shared by users and robots, so the ID alone
+// identifies a player.
+func (p PlayerID) SameID(rawID string) bool {
+	return p.ID == rawID
+}
+
 type UserID string
 
 func (u UserID) AsPlayerID() PlayerID {
@@ -340,6 +350,7 @@ type DB interface {
 	PendingGames() ([]GameID, error)
 	Game(GameID) (*Game, error)
 	JoinGame(GameID, PlayerID) error
+	RemovePlayer(GameID, PlayerID) error
 	AssignRole(GameID, *PlayerRole) error
 
 	PlayersInGame(gID GameID) ([]*PlayerRole, error)

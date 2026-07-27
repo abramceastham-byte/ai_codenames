@@ -160,6 +160,26 @@ func (db *DB) JoinGame(gID codenames.GameID, pID codenames.PlayerID) error {
 	return nil
 }
 
+// RemovePlayer drops a player from a game's roster. Like the SQLite
+// implementation, removing a player who isn't in the game is a no-op.
+func (db *DB) RemovePlayer(gID codenames.GameID, pID codenames.PlayerID) error {
+	prs, ok := db.playerRoles[gID]
+	if !ok {
+		return codenames.ErrGameNotFound
+	}
+
+	kept := make([]*codenames.PlayerRole, 0, len(prs))
+	for _, pr := range prs {
+		if pr.PlayerID == pID {
+			continue
+		}
+		kept = append(kept, pr)
+	}
+	db.playerRoles[gID] = kept
+
+	return nil
+}
+
 func (db *DB) AssignRole(gID codenames.GameID, req *codenames.PlayerRole) error {
 	prs, ok := db.playerRoles[gID]
 	if !ok {

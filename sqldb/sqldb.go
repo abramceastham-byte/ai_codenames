@@ -55,6 +55,11 @@ INSERT INTO GamePlayers
 (game_id, player_id, role_assigned) VALUES
 (?, ?, 0)`
 
+	removePlayerStmt = `
+DELETE FROM GamePlayers
+WHERE game_id = ?
+	AND player_id = ?`
+
 	assignRoleStmt = `
 UPDATE GamePlayers
 SET role_assigned = 1,
@@ -357,6 +362,21 @@ func (s *DB) JoinGame(gID codenames.GameID, pID codenames.PlayerID) error {
 	// If we're here, we've got a player ID and we can add them to the game.
 	if _, err := s.sdb.Exec(joinGameStmt, gID, entityID); err != nil {
 		return err
+	}
+	return nil
+}
+
+// RemovePlayer drops a player from a game's roster. It's used to undo a
+// misplaced AI in the lobby, so it's not an error if the player isn't in the
+// game — the caller just wants them gone.
+func (s *DB) RemovePlayer(gID codenames.GameID, pID codenames.PlayerID) error {
+	entityID, err := s.Player(pID)
+	if err != nil {
+		return fmt.Errorf("failed to load player: %w", err)
+	}
+
+	if _, err := s.sdb.Exec(removePlayerStmt, gID, entityID); err != nil {
+		return fmt.Errorf("failed to remove player: %w", err)
 	}
 	return nil
 }

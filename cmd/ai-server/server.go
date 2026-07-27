@@ -353,13 +353,25 @@ func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID coden
 		},
 		OnStart: func(gs *msgs.GameStart) {
 			for _, p := range gs.Players {
-				if !p.PlayerID.IsRobot(rID) {
+				// Match on the opaque ID only — the web server strips the
+				// human/robot distinction from player-facing messages, so
+				// IsRobot would never match here.
+				if !p.PlayerID.SameID(string(rID)) {
 					continue
 				}
 				role = p.Role
 				team = p.Team
 				break
 			}
+
+			// If we can't find ourselves in the player list we have no role,
+			// so every hook below silently does nothing and the game stalls.
+			// Shout about it rather than hanging quietly.
+			if role == codenames.NoRole {
+				log.Printf("[ERROR] robot %q not found in player list for game %q — it will not play", rID, gID)
+				return
+			}
+			log.Printf("Game %q started; I'm the %s %s", gID, team, role)
 
 			if role == codenames.SpymasterRole && gs.Game.State.ActiveTeam == team {
 				rc := reasoningCtx{gameID: gID, backend: backendName, team: team, round: predictedClueRound(team)}

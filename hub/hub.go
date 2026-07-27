@@ -30,6 +30,9 @@ type Hub struct {
 
 	// Unregister requests from connections.
 	unregister chan *connection
+
+	// Requests to drop every connection belonging to a single player.
+	disconnect chan *disconnectReq
 }
 
 // New creates a new Hub and starts it in a background Go routine.
@@ -39,6 +42,7 @@ func New() *Hub {
 		player:      make(chan *playerMsg),
 		register:    make(chan *connection),
 		unregister:  make(chan *connection),
+		disconnect:  make(chan *disconnectReq),
 		connections: make(map[codenames.GameID][]*connection),
 	}
 	go h.run()
@@ -53,6 +57,18 @@ func (h *Hub) run() {
 			h.connections[c.gameID] = append(conns, c)
 		case c := <-h.unregister:
 			h.deleteConn(c)
+		case d := <-h.disconnect:
+			// Copy first: deleteConn mutates the slice we'd be ranging over.
+			var doomed []*connection
+			for _, c := range h.connections[d.gameID] {
+				if c.playerID == d.playerID {
+					doomed = append(doomed, c)
+				}
+			}
+			for _, c := range doomed {
+				h.deleteConn(c)
+			}
+			close(d.done)
 		case m := <-h.broadcast:
 			for _, c := range h.connections[m.gameID] {
 				select {
@@ -75,8 +91,12 @@ func (h *Hub) run() {
 	}
 }
 
+// deleteConn drops a connection and closes its send channel. It's idempotent:
+// a connection can be torn down from several directions at once (a failed
+// broadcast, an explicit Disconnect, and the readPump noticing the socket
+// died), and closing send twice would panic. Only the call that actually finds
+// the connection still registered does the close.
 func (h *Hub) deleteConn(c *connection) {
-	close(c.send)
 	rconns := h.connections[c.gameID]
 	for i, rconn := range rconns {
 		if rconn.id == c.id {
@@ -84,6 +104,7 @@ func (h *Hub) deleteConn(c *connection) {
 			copy(rconns[i:], rconns[i+1:])
 			rconns[len(rconns)-1] = nil
 			h.connections[c.gameID] = rconns[:len(rconns)-1]
+			close(c.send)
 			return
 		}
 	}
@@ -128,6 +149,26 @@ func (h *Hub) ToPlayer(gID codenames.GameID, pID codenames.PlayerID, msg any) er
 	}
 
 	return nil
+}
+
+type disconnectReq struct {
+	gameID   codenames.GameID
+	playerID codenames.PlayerID
+	done     chan struct{}
+}
+
+// Disconnect closes every connection a player holds on a game, which is how we
+// tell an AI that's been removed from a lobby to stop playing: its read loop
+// fails and the robot's goroutine unwinds. Safe to call for a player with no
+// open connections.
+func (h *Hub) Disconnect(gID codenames.GameID, pID codenames.PlayerID) {
+	req := &disconnectReq{
+		gameID:   gID,
+		playerID: pID,
+		done:     make(chan struct{}),
+	}
+	h.disconnect <- req
+	<-req.done
 }
 
 // Register associates a connection with the hub and a given game.
