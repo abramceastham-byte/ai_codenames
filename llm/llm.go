@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +42,10 @@ type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
 	Stream   bool          `json:"stream"`
+	// Format, when set to "json", makes Ollama constrain decoding to valid
+	// JSON. It doesn't enforce our schema, but it removes the whole class of
+	// "model wrapped the object in prose" parse failures.
+	Format string `json:"format,omitempty"`
 }
 
 type chatMessage struct {
@@ -54,11 +57,14 @@ type chatResponse struct {
 	Message chatMessage `json:"message"`
 }
 
-func (ai *AI) chat(ctx context.Context, messages []chatMessage) (string, error) {
+// chat sends a conversation to Ollama. format is passed through to the API;
+// pass "json" to constrain the reply to a JSON value, or "" for free text.
+func (ai *AI) chat(ctx context.Context, messages []chatMessage, format string) (string, error) {
 	body, err := json.Marshal(chatRequest{
 		Model:    ai.model,
 		Messages: messages,
 		Stream:   false,
+		Format:   format,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal request: %w", err)
@@ -128,30 +134,32 @@ func (ai *AI) giveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Cl
 		}
 	}
 
-	system := `You are a skilled human playing as a Codenames spymaster. You must give a single-word clue and a count of how many of your team's words it relates to. Give clues the way a person would, not like a search engine.
+	system := `You are a skilled human playing as a Codenames spymaster. You give a single-word clue and name exactly which of your team's words that clue points to. Give clues the way a person would, not like a search engine.
 
 Rules:
 - Your clue must be a SINGLE word (no spaces, no hyphens, no proper nouns).
-- Your clue cannot be any word on the board or a variant/substring of a board word.
+- Your clue can NEVER be a word that appears anywhere on the board, in any form. If "king" is on the board, then "king", "kings" and "kingdom" are all rejected — say "monarch" instead. This applies to every word listed below, including your own team's words: naming a board word as the clue is an illegal move, not a shortcut.
 - You MUST avoid clues that relate to the assassin word — guessing it loses the game instantly.
 - You should avoid clues that relate to opponent words or bystanders.
-- Prefer a count of 2 or 3. Only give 4 or more if the connection is so natural that a person would spot it instantly.
+- Every word you list in "targets" must be one of YOUR team's words, spelled exactly as given.
+- Prefer 2 or 3 targets. Only list 4 or more if the connection is so natural that a person would spot it instantly.
 - Choose clues that feel intuitive and slightly creative, not just the most statistically obvious connection. Connecting words in an indirect or cultural way — the way a person would think of them — is good.
 
 Before finalizing your clue, explicitly ask yourself:
 - Is this clue associated with the assassin word in meaning, sound, or category? If an operative might connect it to the assassin, discard it and choose a different clue.
 - Could any of my target words be mistaken for the opponent's words?
 - Is there any bystander or assassin word that shares my clue?
-- If yes, reduce your count or choose a safer clue.
+- If yes, drop the risky word from targets or choose a safer clue.
 
-Never give a count higher than the number of words you are highly confident about. Uncertainty = lower count.
+Only list a word in "targets" if you are highly confident an operative will reach it from your clue. Uncertainty means listing fewer words, never listing a word you are hoping about.
 
-Respond with EXACTLY two lines:
-WORD COUNT
-REASON: <one short sentence explaining your reasoning>
-For example:
-OCEAN 3
-REASON: Whale, ship, and wave are all things found in the ocean.`
+Respond with ONLY a JSON object, no other text, in exactly this shape:
+{"clue": "<your one-word clue>", "targets": ["<board word>", ...], "links": {"<board word>": "<why the clue points to this specific word>", ...}}
+
+"links" must contain one entry for every word in "targets" — the same words, no more and no fewer — and each value must be a concrete reason that word specifically is reached from the clue. A reply whose "links" keys do not exactly match "targets" is rejected.
+
+Example:
+{"clue": "ocean", "targets": ["whale", "ship"], "links": {"whale": "whales are the largest ocean animals", "ship": "ships cross the ocean"}}`
 
 	prompt := fmt.Sprintf(`You are the %s team spymaster.
 
@@ -166,27 +174,48 @@ Give your clue:`, teamName,
 		strings.Join(bystanders, ", "),
 		strings.Join(assassin, ", "))
 
+	messages := []chatMessage{
+		{Role: "system", Content: system},
+		{Role: "user", Content: prompt},
+	}
+
+	// All retries share one timeout budget, matching the operative path: a
+	// rejected reply must never multiply how long a human waits for a clue.
 	ctx, cancel := context.WithTimeout(context.Background(), ai.timeout)
 	defer cancel()
 
-	reply, err := ai.chat(ctx, []chatMessage{
-		{Role: "system", Content: system},
-		{Role: "user", Content: prompt},
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("llm chat: %w", err)
+	var lastErr error
+	for attempt := range 3 {
+		reply, err := ai.chat(ctx, messages, "json")
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) && lastErr != nil {
+				// We had a real reply earlier and merely ran out of time
+				// re-asking; report the substantive rejection instead.
+				break
+			}
+			return nil, "", fmt.Errorf("llm chat: %w", err)
+		}
+
+		log.Printf("[LLM Spymaster] attempt=%d, raw response: %q", attempt+1, reply)
+
+		clue, reasoning, err := parseClueResponse(reply, myWords, b.Cards)
+		if err == nil {
+			log.Printf("[LLM Spymaster] clue: %s %d (targets: %s)", clue.Word, clue.Count, reasoning)
+			return clue, reasoning, nil
+		}
+
+		lastErr = err
+		log.Printf("[LLM Spymaster] rejected attempt=%d: %v", attempt+1, err)
+
+		// Tell the model exactly what was wrong so the retry is informed
+		// rather than a re-roll of the same mistake.
+		messages = append(messages,
+			chatMessage{Role: "assistant", Content: reply},
+			chatMessage{Role: "user", Content: fmt.Sprintf("That reply was rejected: %v. Respond again with ONLY the JSON object, listing one \"links\" entry for each word in \"targets\". Your team's words are: %s", err, strings.Join(myWords, ", "))},
+		)
 	}
 
-	log.Printf("[LLM Spymaster] raw response: %q", reply)
-
-	clue, err := parseClueResponse(reply)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to parse LLM clue %q: %w", reply, err)
-	}
-
-	reasoning := extractReason(reply)
-	log.Printf("[LLM Spymaster] clue: %s %d (reason: %s)", clue.Word, clue.Count, reasoning)
-	return clue, reasoning, nil
+	return nil, "", fmt.Errorf("no valid clue after 3 attempts: %w", lastErr)
 }
 
 // extractReason returns the text following a "REASON:" line in an LLM reply,
@@ -201,35 +230,111 @@ func extractReason(reply string) string {
 	return ""
 }
 
-// parseClueResponse extracts a "WORD COUNT" clue from the LLM's response.
-// It tries the last line first (in case the model adds preamble), then the first line.
-func parseClueResponse(reply string) (*codenames.Clue, error) {
-	lines := strings.Split(strings.TrimSpace(reply), "\n")
+// clueReply is the schema the spymaster model must produce. Note the absence
+// of any count field: the model names the words it means, and the count is
+// derived from that list, so a clue can never claim a number that disagrees
+// with the words behind it.
+type clueReply struct {
+	Clue    string            `json:"clue"`
+	Targets []string          `json:"targets"`
+	Links   map[string]string `json:"links"`
+}
 
-	// Try each line, last first, looking for "WORD NUMBER" pattern.
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(strings.ToLower(line), "reason:") {
-			continue
-		}
-		// Strip common prefixes the model might add
-		line = strings.TrimPrefix(line, "Clue: ")
-		line = strings.TrimPrefix(line, "clue: ")
-		line = strings.TrimPrefix(line, "**")
-		line = strings.TrimSuffix(line, "**")
-		line = strings.TrimSpace(line)
-
-		parts := strings.Fields(line)
-		if len(parts) == 2 {
-			count, err := strconv.Atoi(parts[1])
-			if err == nil && count >= 1 {
-				word := strings.ToLower(parts[0])
-				return &codenames.Clue{Word: word, Count: count}, nil
-			}
-		}
+// parseClueResponse validates the model's JSON reply against myWords and
+// derives the clue count from len(targets). It returns the clue and a
+// human-readable rendering of the per-word justifications.
+//
+// Every failure here is a hard reject — we never repair a malformed reply into
+// a playable clue, because a repaired clue is one whose count no longer
+// reflects words the model actually committed to.
+func parseClueResponse(reply string, myWords []string, board []codenames.Card) (*codenames.Clue, string, error) {
+	raw, err := extractJSONObject(reply)
+	if err != nil {
+		return nil, "", err
 	}
 
-	return nil, fmt.Errorf("could not find WORD COUNT pattern in response")
+	var cr clueReply
+	if err := json.Unmarshal([]byte(raw), &cr); err != nil {
+		return nil, "", fmt.Errorf("reply was not a valid JSON object: %w", err)
+	}
+
+	word := strings.ToLower(strings.TrimSpace(cr.Clue))
+	if word == "" {
+		return nil, "", errors.New(`"clue" was empty`)
+	}
+	if strings.ContainsAny(word, " \t-_") {
+		return nil, "", fmt.Errorf("clue %q must be a single word", word)
+	}
+	if conflict, ok := codenames.ConflictingBoardWord(word, board); ok {
+		return nil, "", fmt.Errorf("clue %q is or contains the board word %q; clues may never be words on the board", word, conflict)
+	}
+
+	if len(cr.Targets) == 0 {
+		return nil, "", errors.New(`"targets" was empty; list the words your clue points to`)
+	}
+
+	// Canonicalize each target to the board's own spelling, rejecting anything
+	// that isn't one of this team's unrevealed words. Without this the derived
+	// count could include a word the team doesn't even own.
+	byLower := make(map[string]string, len(myWords))
+	for _, w := range myWords {
+		byLower[strings.ToLower(strings.TrimSpace(w))] = w
+	}
+
+	targets := make([]string, 0, len(cr.Targets))
+	seen := make(map[string]bool, len(cr.Targets))
+	for _, t := range cr.Targets {
+		key := strings.ToLower(strings.TrimSpace(t))
+		canonical, ok := byLower[key]
+		if !ok {
+			return nil, "", fmt.Errorf("target %q is not one of your team's words", t)
+		}
+		if seen[key] {
+			return nil, "", fmt.Errorf("target %q was listed twice", t)
+		}
+		seen[key] = true
+		targets = append(targets, canonical)
+	}
+
+	// The hard reject: links must cover targets exactly. One justification per
+	// word, no spares — a model that can't name why a word is reached doesn't
+	// get to count it.
+	if len(cr.Links) != len(targets) {
+		return nil, "", fmt.Errorf("got %d \"links\" entries for %d targets; provide exactly one per target", len(cr.Links), len(targets))
+	}
+	links := make(map[string]string, len(cr.Links))
+	for k, v := range cr.Links {
+		key := strings.ToLower(strings.TrimSpace(k))
+		if !seen[key] {
+			return nil, "", fmt.Errorf("\"links\" has an entry for %q, which is not in \"targets\"", k)
+		}
+		if strings.TrimSpace(v) == "" {
+			return nil, "", fmt.Errorf("\"links\" entry for %q was empty; say why the clue points there", k)
+		}
+		links[key] = strings.TrimSpace(v)
+	}
+
+	// len(links) == len(targets) and every key is a distinct target, so the
+	// two sets are now equal.
+
+	parts := make([]string, 0, len(targets))
+	for _, t := range targets {
+		parts = append(parts, fmt.Sprintf("%s: %s", t, links[strings.ToLower(t)]))
+	}
+
+	return &codenames.Clue{Word: word, Count: len(targets)}, strings.Join(parts, "; "), nil
+}
+
+// extractJSONObject pulls the outermost {...} out of a reply. Ollama's JSON
+// mode makes this nearly always a no-op, but models still occasionally fence
+// the object in ```json blocks.
+func extractJSONObject(reply string) (string, error) {
+	start := strings.IndexByte(reply, '{')
+	end := strings.LastIndexByte(reply, '}')
+	if start < 0 || end <= start {
+		return "", errors.New("reply contained no JSON object")
+	}
+	return reply[start : end+1], nil
 }
 
 // Guess implements codenames.Operative.
@@ -295,7 +400,7 @@ Your guess:`, c.Word, c.Count, strings.Join(unrevealed, ", "))
 
 	// Try up to 3 times to get a valid board word.
 	for attempt := range 3 {
-		reply, err := ai.chat(ctx, messages)
+		reply, err := ai.chat(ctx, messages, "")
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				log.Printf("[LLM Operative] clue=%q timed out after attempt=%d, falling back", c.Word, attempt+1)

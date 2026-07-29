@@ -432,10 +432,8 @@ func combinations(input []codenames.Card, k int) [][]string {
 }
 
 func tooCloseToBoardWord(clue string, b *codenames.Board, combo []string) bool {
-	for _, card := range b.Cards {
-		if strings.Contains(clue, card.Codename) || strings.Contains(card.Codename, clue) {
-			return true
-		}
+	if _, ok := codenames.ConflictingBoardWord(clue, b.Cards); ok {
+		return true
 	}
 	for _, target := range combo {
 		if hammingDistance(clue, target) < 3 {

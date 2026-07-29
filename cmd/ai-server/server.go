@@ -80,6 +80,13 @@ type reasoningLogEntry struct {
 	Detail    string           `json:"detail"`
 	Reasoning string           `json:"reasoning"`
 	Error     string           `json:"error,omitempty"`
+	// SuspectedCompound names a board word embedded in the clue that isn't a
+	// derived form of it — "airport" for AIR. These are recorded but never
+	// blocked: telling a real compound from a coincidence ("justice" contains
+	// "ice") needs a wordlist, and a wrongly refused clue mid-round is a
+	// visible defect in the instrument. Logging them yields labeled data on
+	// how often this actually fires across real games.
+	SuspectedCompound string `json:"suspected_compound,omitempty"`
 }
 
 func (s *Server) logReasoning(e reasoningLogEntry) {
@@ -492,16 +499,23 @@ func (s *Server) giveClue(ai AI, b *codenames.Board, agent codenames.Agent, rc r
 		}
 	}
 
+	// Second-tier check: recorded for later analysis, deliberately not enforced.
+	suspect, _ := codenames.SuspectedCompound(clue.Word, b.Cards)
+	if suspect != "" {
+		log.Printf("[WARN] clue %q may be a compound of board word %q (allowed, logged)", clue.Word, suspect)
+	}
+
 	s.logReasoning(reasoningLogEntry{
-		GameID:    rc.gameID,
-		Round:     rc.round,
-		Team:      rc.team,
-		Role:      codenames.SpymasterRole,
-		Backend:   rc.backend,
-		Action:    "clue",
-		Detail:    clue.String(),
-		Reasoning: reasoning,
-		Error:     errString(err),
+		GameID:            rc.gameID,
+		Round:             rc.round,
+		Team:              rc.team,
+		Role:              codenames.SpymasterRole,
+		Backend:           rc.backend,
+		Action:            "clue",
+		Detail:            clue.String(),
+		Reasoning:         reasoning,
+		Error:             errString(err),
+		SuspectedCompound: suspect,
 	})
 
 	humanThinkDelay(start, 8*time.Second, 25*time.Second)

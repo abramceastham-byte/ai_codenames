@@ -134,6 +134,11 @@ func (g *Game) Move(mv *Move) (*codenames.GameState, codenames.GameStatus, error
 		if mv.GiveClue == nil {
 			return nil, "", errors.New("no clue was given")
 		}
+		// Enforced here rather than per-player, because every clue — human,
+		// w2v and LLM alike — reaches the game through this path.
+		if word, ok := codenames.ConflictingBoardWord(mv.GiveClue.Word, g.state.Board.Cards); ok {
+			return nil, "", fmt.Errorf("clue %q conflicts with the board word %q", mv.GiveClue.Word, word)
+		}
 		g.handleGiveClue(mv.GiveClue)
 	case ActionGuess:
 		if g.state.ActiveRole != codenames.OperativeRole {

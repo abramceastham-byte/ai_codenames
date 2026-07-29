@@ -138,6 +138,85 @@ func TestGamePlayInvalidMoves(t *testing.T) {
 		}
 	})
 
+	t.Run("clue that is a board word", func(t *testing.T) {
+		g := newTestGame(t)
+		if _, _, err := g.Move(&Move{
+			Action:   ActionGiveClue,
+			Team:     codenames.RedTeam,
+			GiveClue: &codenames.Clue{Word: "r0", Count: 2},
+		}); err == nil {
+			t.Fatal("Move(clue) naming a board word: got nil error, want error")
+		}
+
+		// The rejected clue must not have handed the turn to the operative,
+		// or the team would be stuck guessing against a clue that was refused.
+		if g.state.ActiveRole != codenames.SpymasterRole {
+			t.Fatalf("after a rejected clue, ActiveRole = %q, want %q", g.state.ActiveRole, codenames.SpymasterRole)
+		}
+		if len(g.state.Clues) != 0 {
+			t.Fatalf("after a rejected clue, len(Clues) = %d, want 0", len(g.state.Clues))
+		}
+
+		// A legal clue still works afterwards.
+		if _, _, err := g.Move(&Move{
+			Action:   ActionGiveClue,
+			Team:     codenames.RedTeam,
+			GiveClue: &codenames.Clue{Word: "red-things", Count: 2},
+		}); err != nil {
+			t.Fatalf("Move(clue) after a rejected clue: %v", err)
+		}
+	})
+
+	t.Run("clue that is a derived form of a board word", func(t *testing.T) {
+		// The shared test board uses two-letter codenames, which are below the
+		// root-length floor, so this needs a board with a real word on it.
+		g := NewForMove(&codenames.GameState{
+			ActiveTeam:   codenames.RedTeam,
+			ActiveRole:   codenames.SpymasterRole,
+			StartingTeam: codenames.RedTeam,
+			Board: &codenames.Board{Cards: []codenames.Card{
+				{Codename: "king", Agent: codenames.RedAgent},
+				{Codename: "ice", Agent: codenames.BlueAgent},
+			}},
+		})
+
+		for _, word := range []string{"kings", "kingdom", "KINGLY", "icy", "icing"} {
+			if _, _, err := g.Move(&Move{
+				Action:   ActionGiveClue,
+				Team:     codenames.RedTeam,
+				GiveClue: &codenames.Clue{Word: word, Count: 1},
+			}); err == nil {
+				t.Errorf("Move(clue %q): got nil error, want error", word)
+			}
+		}
+
+		// Containment alone is not a conflict — these must all be playable.
+		for _, word := range []string{"nice", "justice", "bring", "kite"} {
+			if _, _, err := g.Move(&Move{
+				Action:   ActionGiveClue,
+				Team:     codenames.RedTeam,
+				GiveClue: &codenames.Clue{Word: word, Count: 1},
+			}); err != nil {
+				t.Errorf("Move(clue %q): %v, want nil", word, err)
+			}
+			// Each accepted clue hands the turn over, so reset for the next.
+			g.state.ActiveRole = codenames.SpymasterRole
+		}
+	})
+
+	t.Run("clue that is a board word in a different case", func(t *testing.T) {
+		g := newTestGame(t)
+		// Human clues arrive upper-cased from the web handler, so the check
+		// has to be case-insensitive to catch them at all.
+		if _, _, err := g.Move(&Move{
+			Action:   ActionGiveClue,
+			Team:     codenames.RedTeam,
+			GiveClue: &codenames.Clue{Word: "R0", Count: 1},
+		}); err == nil {
+			t.Fatal("Move(clue) naming an upper-cased board word: got nil error, want error")
+		}
+	})
+
 	t.Run("guess for a word not on the board", func(t *testing.T) {
 		g := newTestGame(t)
 		mustGiveClue(t, g, codenames.RedTeam, "red-things", 1)
