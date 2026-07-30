@@ -4,6 +4,7 @@ package memdb
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/bcspragu/Codenames/codenames"
 )
@@ -16,7 +17,13 @@ const (
 	robotID = idNamespace("robot")
 )
 
+// DB is safe for concurrent use, because the web server doesn't only touch the
+// database from the goroutine serving a request — a held clue is committed from
+// a background goroutine, which can land while a request is reading. Every
+// exported method takes mu; the unexported helpers assume the caller holds it.
 type DB struct {
+	mu sync.Mutex
+
 	ids           map[idNamespace]int
 	games         map[codenames.GameID]*codenames.Game
 	isGamePrivate map[codenames.GameID]bool
@@ -37,6 +44,9 @@ func New() *DB {
 }
 
 func (db *DB) NewGame(g *codenames.Game, private bool) (codenames.GameID, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	gID := codenames.GameID(db.newID(gameID))
 
 	gc := g.Clone()
@@ -50,6 +60,9 @@ func (db *DB) NewGame(g *codenames.Game, private bool) (codenames.GameID, error)
 }
 
 func (db *DB) Game(gID codenames.GameID) (*codenames.Game, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	g, ok := db.games[gID]
 	if !ok {
 		return nil, codenames.ErrGameNotFound
@@ -59,6 +72,9 @@ func (db *DB) Game(gID codenames.GameID) (*codenames.Game, error) {
 }
 
 func (db *DB) NewUser(name string) (codenames.UserID, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	uID := codenames.UserID(db.newID(userID))
 
 	u := &codenames.User{ID: uID, Name: name}
@@ -69,6 +85,9 @@ func (db *DB) NewUser(name string) (codenames.UserID, error) {
 }
 
 func (db *DB) User(uID codenames.UserID) (*codenames.User, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	u, ok := db.users[uID]
 	if !ok {
 		return nil, codenames.ErrUserNotFound
@@ -78,6 +97,9 @@ func (db *DB) User(uID codenames.UserID) (*codenames.User, error) {
 }
 
 func (db *DB) NewRobot(name string) (codenames.RobotID, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	rID := codenames.RobotID(db.newID(robotID))
 
 	r := &codenames.Robot{ID: rID, Name: name}
@@ -88,6 +110,9 @@ func (db *DB) NewRobot(name string) (codenames.RobotID, error) {
 }
 
 func (db *DB) Robot(rID codenames.RobotID) (*codenames.Robot, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	r, ok := db.robots[rID]
 	if !ok {
 		return nil, codenames.ErrRobotNotFound
@@ -97,6 +122,9 @@ func (db *DB) Robot(rID codenames.RobotID) (*codenames.Robot, error) {
 }
 
 func (db *DB) PendingGames() ([]codenames.GameID, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	var pending []codenames.GameID
 	for gID, g := range db.games {
 		if g.Status == codenames.Pending && !db.isGamePrivate[gID] {
@@ -107,6 +135,9 @@ func (db *DB) PendingGames() ([]codenames.GameID, error) {
 }
 
 func (db *DB) PlayersInGame(gID codenames.GameID) ([]*codenames.PlayerRole, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	prs, ok := db.playerRoles[gID]
 	if !ok {
 		return nil, codenames.ErrGameNotFound
@@ -116,6 +147,9 @@ func (db *DB) PlayersInGame(gID codenames.GameID) ([]*codenames.PlayerRole, erro
 }
 
 func (db *DB) Player(pID codenames.PlayerID) (string, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	if pID.PlayerType != codenames.PlayerTypeHuman {
 		return "", fmt.Errorf("player type %q not supported for memdb, only humans for now", pID.PlayerType)
 	}
@@ -138,6 +172,9 @@ func clonePRs(prs []*codenames.PlayerRole) []*codenames.PlayerRole {
 }
 
 func (db *DB) JoinGame(gID codenames.GameID, pID codenames.PlayerID) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	prs, ok := db.playerRoles[gID]
 	if !ok {
 		return codenames.ErrGameNotFound
@@ -163,6 +200,9 @@ func (db *DB) JoinGame(gID codenames.GameID, pID codenames.PlayerID) error {
 // RemovePlayer drops a player from a game's roster. Like the SQLite
 // implementation, removing a player who isn't in the game is a no-op.
 func (db *DB) RemovePlayer(gID codenames.GameID, pID codenames.PlayerID) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	prs, ok := db.playerRoles[gID]
 	if !ok {
 		return codenames.ErrGameNotFound
@@ -181,6 +221,9 @@ func (db *DB) RemovePlayer(gID codenames.GameID, pID codenames.PlayerID) error {
 }
 
 func (db *DB) AssignRole(gID codenames.GameID, req *codenames.PlayerRole) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	prs, ok := db.playerRoles[gID]
 	if !ok {
 		return codenames.ErrGameNotFound
@@ -199,6 +242,9 @@ func (db *DB) AssignRole(gID codenames.GameID, req *codenames.PlayerRole) error 
 }
 
 func (db *DB) BatchPlayerNames(pIDs []codenames.PlayerID) (map[codenames.PlayerID]string, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	out := make(map[codenames.PlayerID]string)
 	for _, pID := range pIDs {
 		if pID.PlayerType != codenames.PlayerTypeHuman {
@@ -217,12 +263,18 @@ func (db *DB) BatchPlayerNames(pIDs []codenames.PlayerID) (map[codenames.PlayerI
 }
 
 func (db *DB) StartGame(gID codenames.GameID) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	return db.updateGame(gID, func(g *codenames.Game) {
 		g.Status = codenames.Playing
 	})
 }
 
 func (db *DB) UpdateState(gID codenames.GameID, gs *codenames.GameState, stat codenames.GameStatus) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	return db.updateGame(gID, func(g *codenames.Game) {
 		g.State = gs.Clone()
 		g.Status = stat

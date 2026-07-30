@@ -3,6 +3,7 @@
 	import { gameStore } from '$lib/game.svelte';
 	import { Api } from '$lib/api';
 	import type { Team, Role, Player } from '$lib/types';
+	import ClueHoldToggle from './ClueHoldToggle.svelte';
 
 	const { game, players, user } = $derived(gameStore);
 	const api = new Api();
@@ -119,6 +120,8 @@
 			{actionError}
 		</div>
 	{/if}
+
+	<ClueHoldToggle />
 
 	{#snippet joinButton(team: Team, role: Role, classes: string)}
 		<button

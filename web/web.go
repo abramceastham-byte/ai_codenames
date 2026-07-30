@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bcspragu/Codenames/aiclient"
 	"github.com/bcspragu/Codenames/boardgen"
+	"github.com/bcspragu/Codenames/cluedelay"
 	"github.com/bcspragu/Codenames/codenames"
 	"github.com/bcspragu/Codenames/consensus"
 	"github.com/bcspragu/Codenames/game"
@@ -39,14 +41,27 @@ type Srv struct {
 	r           *rand.Rand
 	ws          *websocket.Upgrader
 	consensus   *consensus.Guesser
+	clues       *cluedelay.Tracker
 	ai          *aiclient.Client
 	logDir      string
 	genName     func() string
 	adminSecret string
 }
 
+// Option overrides a server default.
+type Option func(*Srv)
+
+// WithClueDelay sets how long a spymaster's clue is withheld from their
+// operatives, measured from the start of the clue phase rather than from
+// submission. Defaults to cluedelay.DefaultDelay.
+func WithClueDelay(d time.Duration) Option {
+	return func(s *Srv) {
+		s.clues = cluedelay.New(d)
+	}
+}
+
 // New returns an initialized server.
-func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aiclient.Client, logDir, adminSecret string) *Srv {
+func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aiclient.Client, logDir, adminSecret string, opts ...Option) *Srv {
 	s := &Srv{
 		sc:  sc,
 		hub: hub.New(),
@@ -58,10 +73,15 @@ func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aicli
 			},
 		},
 		consensus:   consensus.New(),
+		clues:       cluedelay.New(cluedelay.DefaultDelay),
 		ai:          ai,
 		logDir:      logDir,
 		genName:     names.Random,
 		adminSecret: adminSecret,
+	}
+
+	for _, opt := range opts {
+		opt(s)
 	}
 
 	s.mux = s.initMux()
@@ -168,6 +188,19 @@ func (s *Srv) initMux() *mux.Router {
 			path:        "/api/game/{id}/clue",
 			method:      http.MethodPost,
 			handlerFunc: s.requireGameAuth(s.serveClue, isSpymaster(), isGamePlaying()),
+		},
+		// Read whether this game holds clues. Creator-only: telling an
+		// operative whether the hold is on would undo the point of it.
+		{
+			path:        "/api/game/{id}/clueHold",
+			method:      http.MethodGet,
+			handlerFunc: s.requireGameAuth(s.serveClueHold, isGameCreator()),
+		},
+		// Turn this game's clue hold on or off, mid-game.
+		{
+			path:        "/api/game/{id}/clueHold",
+			method:      http.MethodPost,
+			handlerFunc: s.requireGameAuth(s.serveSetClueHold, isGameCreator()),
 		},
 		// Serve a card guess to a game.
 		{
@@ -823,6 +856,11 @@ func (s *Srv) serveStartGame(w http.ResponseWriter, r *http.Request, p *codename
 			WithMessage("failed to make players")
 	}
 
+	// The starting team's clue phase begins now. Start the clock before the
+	// message goes out, or an AI spymaster that answers the instant it sees
+	// GAME_START would be timed from after its own reply.
+	s.clues.Start(game.ID)
+
 	if err := s.broadcastMessage(game, prs, func(g *codenames.Game) any {
 		return &msgs.GameStart{
 			Game:    g,
@@ -1004,25 +1042,137 @@ func (s *Srv) serveClue(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 		Word:  strings.ToUpper(req.Word),
 		Count: req.Count,
 	}
-	// We don't need to check if the status changed/game is over, because giving
-	// a clue will never end the game.
-	newState, newStatus, err := game.NewForMove(g.State).Move(&game.Move{
+	mv := &game.Move{
 		Action:   game.ActionGiveClue,
 		Team:     userPR.Team,
 		GiveClue: clue,
-	})
-	if err != nil {
+	}
+
+	// Validate against a throwaway copy of the state so an illegal clue is
+	// rejected while the spymaster is still looking at the response. The real
+	// move is applied at release time; nothing that Move checks — whose turn it
+	// is, whether the clue collides with a board word — can change in between,
+	// because only a guess moves the game on and no guess is possible until
+	// this clue lands.
+	if _, _, err := game.NewForMove(g.State.Clone()).Move(mv); err != nil {
 		// We assume the error is the result of a bad request.
 		return httperr.
 			BadRequest("player %q in game %q gave invalid clue: %w", p.ID, g.ID, err).
 			WithMessage(fmt.Sprintf("failed to make move: %v", err))
 	}
 
-	// Update the state in the database.
-	if err := s.db.UpdateState(g.ID, newState, newStatus); err != nil {
+	releaseAt, cut, err := s.clues.Hold(g.ID)
+	if err != nil {
 		return httperr.
-			Internal("failed to update state for game %q: %w", g.ID, err).
-			WithMessage("failed to update game state")
+			BadRequest("player %q in game %q gave a clue while one was already pending: %w", p.ID, g.ID, err).
+			WithMessage("your clue is already waiting to be sent to your operatives")
+	}
+
+	// Sit on the clue until the clue phase has run its minimum length, then
+	// commit and broadcast it from a background goroutine. Committing now and
+	// only delaying the broadcast would leak the clue to any operative who
+	// refetched the game state, and blocking the response for up to a minute
+	// would throw the clue away if the spymaster reloaded the page.
+	go s.releaseClue(g.ID, userPR.Team, clue, releaseAt, cut)
+
+	return jsonResp(w, struct {
+		Success bool `json:"success"`
+		// ReleaseAtMS is when the operatives will see this clue, as Unix
+		// milliseconds. Only ever sent to the spymaster who gave it.
+		ReleaseAtMS int64 `json:"release_at_ms"`
+	}{true, releaseAt.UnixMilli()})
+}
+
+// clueHoldResp describes a game's clue hold to its creator. DelayMS is the
+// server-wide setting, so a zero tells the UI there's no hold to switch on.
+type clueHoldResp struct {
+	Enabled bool  `json:"enabled"`
+	DelayMS int64 `json:"delay_ms"`
+}
+
+func (s *Srv) serveClueHold(w http.ResponseWriter, r *http.Request, p *codenames.Player, g *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
+	return jsonResp(w, clueHoldResp{
+		Enabled: s.clues.Enabled(g.ID),
+		DelayMS: s.clues.Delay().Milliseconds(),
+	})
+}
+
+func (s *Srv) serveSetClueHold(w http.ResponseWriter, r *http.Request, p *codenames.Player, g *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return httperr.BadRequest("failed to decode set clue hold request: %w", err)
+	}
+
+	// Switching the hold off releases a clue that's mid-hold, so the effect is
+	// immediate rather than one turn late.
+	enabled := s.clues.SetEnabled(g.ID, req.Enabled)
+	log.Printf("creator %q set the clue hold for game %q to %t", p.ID, g.ID, enabled)
+
+	// Deliberately not broadcast: the players other than the creator must not
+	// learn whether clues are being held.
+	return jsonResp(w, clueHoldResp{
+		Enabled: enabled,
+		DelayMS: s.clues.Delay().Milliseconds(),
+	})
+}
+
+// releaseClue waits out the remainder of the clue delay, then commits the clue
+// and sends it to the players. cut is closed if the game's hold is switched off
+// mid-wait, which releases the clue early. It runs detached from the request
+// that submitted the clue, so every failure has to be logged — there's no
+// response left to return an error on.
+func (s *Srv) releaseClue(gID codenames.GameID, team codenames.Team, clue *codenames.Clue, releaseAt time.Time, cut <-chan struct{}) {
+	defer s.clues.Done(gID)
+
+	if wait := time.Until(releaseAt); wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-cut:
+			log.Printf("hold on clue %q for game %q was switched off, releasing early", clue, gID)
+		}
+	}
+
+	g, err := s.db.Game(gID)
+	if err != nil {
+		log.Printf("failed to load game %q to release clue %q: %v", gID, clue, err)
+		return
+	}
+
+	// The turn can't have moved on under us — that takes a guess, and the
+	// operatives have nothing to guess against yet — but the game can have
+	// ended some other way, at which point there's nobody to tell.
+	if g.Status != codenames.Playing || g.State.ActiveTeam != team || g.State.ActiveRole != codenames.SpymasterRole {
+		log.Printf("dropping held clue %q for game %q: it's now %q %q in a %q game", clue, gID, g.State.ActiveTeam, g.State.ActiveRole, g.Status)
+		return
+	}
+
+	prs, err := s.db.PlayersInGame(gID)
+	if err != nil {
+		log.Printf("failed to load players in game %q to release clue %q: %v", gID, clue, err)
+		return
+	}
+
+	// We don't need to check if the status changed/game is over, because giving
+	// a clue will never end the game.
+	newState, newStatus, err := game.NewForMove(g.State).Move(&game.Move{
+		Action:   game.ActionGiveClue,
+		Team:     team,
+		GiveClue: clue,
+	})
+	if err != nil {
+		log.Printf("held clue %q for game %q became invalid: %v", clue, gID, err)
+		return
+	}
+
+	// Update the state in the database.
+	if err := s.db.UpdateState(gID, newState, newStatus); err != nil {
+		log.Printf("failed to update state for game %q to release clue %q: %v", gID, clue, err)
+		return
 	}
 	g.State = newState
 	g.Status = newStatus
@@ -1031,18 +1181,12 @@ func (s *Srv) serveClue(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 	if err := s.broadcastMessage(g, prs, func(g *codenames.Game) any {
 		return &msgs.ClueGiven{
 			Clue: clue,
-			Team: userPR.Team,
+			Team: team,
 			Game: g,
 		}
 	}); err != nil {
-		return httperr.
-			Internal("failed to send clue for game %q: %w", g.ID, err).
-			WithMessage("failed to inform players of clue")
+		log.Printf("failed to send clue %q for game %q: %v", clue, gID, err)
 	}
-
-	return jsonResp(w, struct {
-		Success bool `json:"success"`
-	}{true})
 }
 
 func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Player, g *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
@@ -1144,6 +1288,17 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 
 	// Players can keep guessing if the game tells us its still their turn.
 	canKeepGuessing := newState.ActiveRole == codenames.OperativeRole && newStatus != codenames.Finished
+
+	// A guess that ended the turn hands the board to the other team's
+	// spymaster, so their clue phase — and the clock their clue is held
+	// against — starts here, before we tell anyone their turn is up.
+	switch {
+	case newStatus == codenames.Finished:
+		s.clues.Clear(g.ID)
+	case newState.ActiveRole == codenames.SpymasterRole:
+		s.clues.Start(g.ID)
+	}
+
 	if err := s.broadcastMessage(g, prs, func(g *codenames.Game) any {
 		return &msgs.GuessGiven{
 			Guess:           guess,

@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/bcspragu/Codenames/aiclient"
+	"github.com/bcspragu/Codenames/cluedelay"
 	"github.com/bcspragu/Codenames/cryptorand"
 	"github.com/bcspragu/Codenames/sqldb"
 	"github.com/bcspragu/Codenames/web"
@@ -47,6 +48,8 @@ func run(args []string) error {
 		aiServerEndpoint = fSet.String("ai_server_endpoint", "", "The address to connect to the Codenames AI server")
 		logDir           = fSet.String("log_dir", "logs", "Directory to save game logs (CSV) after each game")
 		adminSecret      = fSet.String("admin_secret", "", "Secret string required (via X-Admin-Secret header or admin_secret query param) to access admin-only endpoints like the AI reasoning log. Admin endpoints are disabled if unset.")
+
+		clueDelay = fSet.Duration("clue_delay", cluedelay.DefaultDelay, "Minimum length of a spymaster's clue phase. A clue submitted sooner is held until the phase reaches this age, so an AI's response speed can't give it away. Set to 0 to release clues immediately.")
 	)
 	if err := ff.Parse(fSet, args[1:], ff.WithEnvVars()); err != nil {
 		return fmt.Errorf("failed to parse flags: %w", err)
@@ -79,7 +82,7 @@ func run(args []string) error {
 
 	log.Printf("Server is running on %q", *addr)
 
-	webSrv := web.New(db, r, sc, ai, *logDir, *adminSecret)
+	webSrv := web.New(db, r, sc, ai, *logDir, *adminSecret, web.WithClueDelay(*clueDelay))
 	corsCfg := cors.New(cors.Options{
 		AllowOriginFunc: func(origin string) bool {
 			return true

@@ -86,7 +86,30 @@ export class Api {
 		return this.post(`/api/game/${gameId}/start`, { random_assignment: randomAssignment });
 	}
 
-	async sendClue(gameId: string, word: string, count: number): Promise<{ success: boolean }> {
+	// getClueHold reads whether this game withholds clues. Creator-only — the
+	// server refuses anyone else, since knowing whether the hold is on tells an
+	// operative something they shouldn't have.
+	async getClueHold(gameId: string): Promise<{ enabled: boolean; delay_ms: number }> {
+		return this.get(`/api/game/${gameId}/clueHold`);
+	}
+
+	// setClueHold turns this game's clue hold on or off, taking effect at once:
+	// switching it off releases a clue that's mid-hold.
+	async setClueHold(
+		gameId: string,
+		enabled: boolean
+	): Promise<{ enabled: boolean; delay_ms: number }> {
+		return this.post(`/api/game/${gameId}/clueHold`, { enabled });
+	}
+
+	// sendClue submits a clue. The server withholds it from the operatives until
+	// the clue phase reaches its minimum length, and reports when that happens
+	// as release_at_ms (Unix milliseconds).
+	async sendClue(
+		gameId: string,
+		word: string,
+		count: number
+	): Promise<{ success: boolean; release_at_ms: number }> {
 		return this.post(`/api/game/${gameId}/clue`, { word, count });
 	}
 

@@ -10,13 +10,33 @@
 	let clueCount = $state(1);
 	let sending = $state(false);
 
+	// The server withholds a clue until the clue phase has run its minimum
+	// length, so that a fast answer doesn't give away who — or what — gave it.
+	// Until then the form stays locked and shows the countdown instead.
+	let releaseAtMs = $state<number | null>(null);
+	let now = $state(Date.now());
+	const secondsHeld = $derived(
+		releaseAtMs === null ? 0 : Math.max(0, Math.ceil((releaseAtMs - now) / 1000))
+	);
+	const held = $derived(secondsHeld > 0);
+
+	$effect(() => {
+		if (!held) return;
+		const ticker = setInterval(() => {
+			now = Date.now();
+		}, 250);
+		return () => clearInterval(ticker);
+	});
+
 	async function submitClue() {
-		if (!game || !clueWord) return;
+		if (!game || !clueWord || held) return;
 		sending = true;
 		try {
-			await api.sendClue(game.id, clueWord, clueCount);
+			const res = await api.sendClue(game.id, clueWord, clueCount);
 			clueWord = '';
 			clueCount = 1;
+			now = Date.now();
+			releaseAtMs = res.release_at_ms ?? null;
 		} catch (e) {
 			alert('Failed to send clue: ' + e);
 		} finally {
@@ -48,6 +68,17 @@
 			{game?.state.active_role}...
 		</div>
 	{:else if myPlayer?.role === 'SPYMASTER'}
+		{#if held}
+			<div class="mb-3 rounded border border-amber-200 bg-amber-50 p-3 text-center">
+				<div class="font-medium text-amber-900">
+					Clue sent — your operatives will see it in {secondsHeld}s
+				</div>
+				<div class="mt-1 text-sm text-amber-700">
+					Clues are always released at the same point in the turn, so how fast you answered stays
+					between us.
+				</div>
+			</div>
+		{/if}
 		<form
 			class="flex flex-col gap-4 sm:flex-row sm:items-end"
 			onsubmit={(e) => {
@@ -62,7 +93,8 @@
 					id="clue-word"
 					type="text"
 					bind:value={clueWord}
-					class="w-full rounded border border-gray-300 p-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none uppercase"
+					disabled={held}
+					class="w-full rounded border border-gray-300 p-2 uppercase focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:bg-gray-100"
 					placeholder="e.g. Tree"
 					required
 				/>
@@ -75,16 +107,17 @@
 					min="0"
 					max="9"
 					bind:value={clueCount}
-					class="w-full rounded border border-gray-300 p-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+					disabled={held}
+					class="w-full rounded border border-gray-300 p-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:bg-gray-100"
 					required
 				/>
 			</div>
 			<button
 				type="submit"
-				disabled={sending}
+				disabled={sending || held}
 				class="rounded bg-indigo-600 px-6 py-2 font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
 			>
-				Give Clue
+				{held ? `Holding (${secondsHeld}s)` : 'Give Clue'}
 			</button>
 		</form>
 	{:else}

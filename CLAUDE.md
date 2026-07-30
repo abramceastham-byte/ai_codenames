@@ -84,6 +84,10 @@ Both modes use the `Spymaster` and `Operative` interfaces, making AI and human p
 
 **Consensus:** `consensus/` tracks operative votes — a strict majority (>50%) is required to finalize a guess in multiplayer games.
 
+**Clue delay:** `cluedelay/` puts a floor (default 60s, `--clue_delay`) on how long a spymaster's clue phase lasts. A clue submitted sooner is held by the web server — not written to the DB, not broadcast — until the phase reaches that age, so an AI spymaster's response speed can't give it away. The spymaster's own client learns the release time from the clue response; nobody else sees anything until release.
+
+The hold is per game and can be flipped mid-game by the game creator (`GET`/`POST /api/game/{id}/clueHold`, gated on `isGameCreator`), surfaced as a toggle in the setup and board views. Switching it off releases a clue that's mid-hold immediately. The setting is deliberately never broadcast and the endpoint refuses non-creators — an operative who knew the hold was off could read a three-second clue as a bot. State is in-memory, so a server restart returns every game to the `--clue_delay` default; `--clue_delay=0` disables holding server-wide and the per-game toggle then has no duration to switch on.
+
 **Messages:** `msgs/` defines all WebSocket message types with JSON marshaling (`RoleAssigned`, `GameStart`, `ClueGiven`, `GuessGiven`, `PlayerVote`, etc.).
 
 ### Frontend
@@ -109,7 +113,7 @@ SvelteKit is configured as a fully static SPA (`adapter-static`, `fallback: '200
 | `OLLAMA_ENDPOINT` | AI server | Ollama URL for the `llm` backend (default `http://localhost:11434`) |
 | `OLLAMA_MODEL` | AI server | Ollama model name for the `llm` backend (default `llama3`) |
 
-The web server also accepts `--addr` (default `:8080`), `--db_path` (default `codenames.db`), and `--hash_key_path`/`--block_key_path` for secure cookie keys (auto-generated if missing).
+The web server also accepts `--addr` (default `:8080`), `--db_path` (default `codenames.db`), `--clue_delay` (default `60s`, `0` to disable), and `--hash_key_path`/`--block_key_path` for secure cookie keys (auto-generated if missing).
 
 ### Docker
 
