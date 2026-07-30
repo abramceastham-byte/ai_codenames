@@ -43,10 +43,12 @@ AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenam
 # Terminal 2 — frontend (port 5173)
 cd frontend && pnpm run dev
 
-# Terminal 3 — AI server (port 8081, requires model files)
+# Terminal 3 — AI server (port 8081, requires model files; run
+# `scripts/setup_models.sh` once to fetch them if data/glove.bin and
+# data/conceptnet.bin don't exist yet — requires python3)
 GLOVE_MODEL_PATH=data/glove.bin \
 CONCEPT_NET_MODEL_PATH=data/conceptnet.bin \
-COMMON_WORDLIST=data/common_words.txt \
+COMMON_WORDLIST=data/common_words_filtered.txt \
 AUTH_SECRET=abc123 \
 WEB_SERVER_ENDPOINT=http://localhost:8080 \
 ENABLED_BACKENDS=w2v,llm \
@@ -57,6 +59,10 @@ go run ./cmd/ai-server/
 ```
 
 Then open `http://localhost:5173`. The `llm` backend requires [Ollama](https://ollama.com) running with the model pulled (e.g. `ollama pull llama3`); drop `llm` from `ENABLED_BACKENDS` if you only want the w2v player.
+
+### Running Locally (Docker Compose)
+
+`docker compose up --build` starts all four services (a one-shot `model-setup` job, then web server, AI server, frontend) with sane dev defaults — see `docker-compose.yml` and the "Running Locally via Docker Compose" section in README.md. `model-setup` fetches + converts `data/glove.bin`/`data/conceptnet.bin` automatically (Dockerfile.modelsetup, using `scripts/setup_models.sh`), so no host-side Python is required for the Docker flow specifically — only the manual (non-Docker) flow needs Python installed to run that script directly.
 
 ## Architecture
 

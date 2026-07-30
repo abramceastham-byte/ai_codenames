@@ -27,12 +27,16 @@ pnpm install   # first time only
 pnpm run dev
 
 # In a third terminal, run the AI server (only needed for AI games).
+# First, fetch the GloVe/ConceptNet models the w2v backend needs (skips any
+# already present; requires python3 to run the included conversion script):
+scripts/setup_models.sh
+
 # By default this loads BOTH the w2v and llm backends so you can pick which
 # one each AI player uses from the lobby UI. Note that the model paths should
 # be changed based on whatever model you download/train/use.
 GLOVE_MODEL_PATH=data/glove.bin \
 CONCEPT_NET_MODEL_PATH=data/conceptnet.bin \
-COMMON_WORDLIST=data/common_words.txt \
+COMMON_WORDLIST=data/common_words_filtered.txt \
 AUTH_SECRET=abc123 \
 WEB_SERVER_ENDPOINT=http://localhost:8080 \
 ENABLED_BACKENDS=w2v,llm \
@@ -43,6 +47,22 @@ go run ./cmd/ai-server/
 ```
 
 From here, you can open a web browser to `http://localhost:5173` to start a game.
+
+### Running Locally via Docker Compose
+
+Alternatively, run the whole stack (web server, AI server, frontend) with Docker:
+
+```bash
+docker compose up --build
+```
+
+Then open `http://localhost:5173`. Unlike the manual flow, you don't need Python (or anything besides Docker) installed for this: a `model-setup` service fetches and converts `data/glove.bin`/`data/conceptnet.bin` automatically the first time (it's skipped on later runs once the files exist) before `ai-server` starts. The first run downloads ~1.2GB of model data, so it can take a few minutes; `web-server` and `frontend` come up in parallel regardless.
+
+To also enable the `llm` backend (requires [Ollama](https://ollama.com) running on your host):
+
+```bash
+ENABLED_BACKENDS=w2v,llm docker compose up --build
+```
 
 ## AI Backends
 

@@ -22,6 +22,7 @@ COPY codenames/ codenames/
 COPY client/ client/
 COPY cryptorand/ cryptorand/
 COPY httperr/ httperr/
+COPY llm/ llm/
 COPY msgs/ msgs/
 COPY w2v/ w2v/
 

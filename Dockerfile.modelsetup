@@ -1,0 +1,15 @@
+# docker build -t codenames-model-setup -f Dockerfile.modelsetup .
+#
+# Fetches + converts the GloVe/ConceptNet models the w2v AI backend needs.
+# Run via docker-compose.yml's model-setup service; writes into a volume
+# mounted at /data. Safe to re-run - it skips files that already exist.
+FROM python:3.12-alpine
+
+RUN apk add --no-cache bash curl unzip
+
+WORKDIR /app
+COPY scripts/setup_models.sh scripts/setup_models.sh
+COPY scripts/convert_to_w2v_binary.py scripts/convert_to_w2v_binary.py
+
+ENV DATA_DIR=/data
+ENTRYPOINT ["bash", "scripts/setup_models.sh"]

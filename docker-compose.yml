@@ -1,0 +1,75 @@
+services:
+  model-setup:
+    build:
+      context: .
+      dockerfile: Dockerfile.modelsetup
+    environment:
+      GLOVE_URL: ${GLOVE_URL:-}
+      GLOVE_TXT_NAME: ${GLOVE_TXT_NAME:-}
+      NUMBERBATCH_URL: ${NUMBERBATCH_URL:-}
+    volumes:
+      - model-data:/data
+
+  ai-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.aisrv
+    environment:
+      AUTH_SECRET: ${AUTH_SECRET:-devsecret123}
+      WEB_SERVER_ENDPOINT: http://web-server:8080
+      GLOVE_MODEL_PATH: /data/glove.bin
+      CONCEPT_NET_MODEL_PATH: /data/conceptnet.bin
+      COMMON_WORDLIST: /data/common_words_filtered.txt
+      ENABLED_BACKENDS: ${ENABLED_BACKENDS:-w2v}
+      DEFAULT_BACKEND: ${DEFAULT_BACKEND:-w2v}
+      OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3}
+    volumes:
+      - model-data:/data:ro
+      - ai-logs:/app/logs
+    ports:
+      - "8081:8081"
+    depends_on:
+      model-setup:
+        condition: service_completed_successfully
+
+  web-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.websrv
+    environment:
+      AUTH_SECRET: ${AUTH_SECRET:-devsecret123}
+      AI_SERVER_ENDPOINT: http://ai-server:8081
+    volumes:
+      - web-data:/app
+    ports:
+      - "8080:8080"
+    depends_on:
+      - ai-server
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "corepack enable && pnpm --store-dir /pnpm-store install && pnpm exec vite dev --host 0.0.0.0"
+    environment:
+      API_PROXY_TARGET: http://web-server:8080
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+      - frontend-pnpm-store:/pnpm-store
+    ports:
+      - "5173:5173"
+    depends_on:
+      - web-server
+
+volumes:
+  model-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data
+  web-data:
+  ai-logs:
+  frontend-node-modules:
+  frontend-pnpm-store:

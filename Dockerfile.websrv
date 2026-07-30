@@ -28,6 +28,7 @@ COPY game/ game/
 COPY httperr/ httperr/
 COPY hub/ hub/
 COPY msgs/ msgs/
+COPY names/ names/
 COPY sqldb/ sqldb/
 COPY web/ web/
 
