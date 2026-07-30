@@ -20,6 +20,7 @@ RUN go mod download && go mod verify
 COPY cmd/codenames-server/ cmd/codenames-server/
 COPY aiclient/ aiclient/
 COPY boardgen/ boardgen/
+COPY cluedelay/ cluedelay/
 COPY codenames/ codenames/
 COPY consensus/ consensus/
 COPY cryptorand/ cryptorand/
