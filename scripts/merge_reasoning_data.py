@@ -27,10 +27,15 @@ Usage:
 
     # Just the last 3 games instead of the whole accumulated log:
     python3 scripts/merge_reasoning_data.py --games 3
+
+    # Keep re-running while a game is in progress, so an editor with
+    # logs/merged_reasoning.txt open picks up new turns as they happen:
+    python3 scripts/merge_reasoning_data.py --games 1 --watch
 """
 import argparse
 import json
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -217,23 +222,7 @@ def write_text_transcript(path, merged, unmatched):
                 out.write(format_attempt_line(ev) + "\n\n")
 
 
-def main():
-    ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    ap.add_argument("--reasoning-log", default="logs/ai_reasoning.jsonl")
-    ap.add_argument("--server-log", default="logs/ai-server.log")
-    ap.add_argument("--output", default="logs/merged_reasoning.jsonl")
-    ap.add_argument(
-        "--window-seconds", type=int, default=10,
-        help="max time gap (each direction) to associate a raw attempt with a decision",
-    )
-    ap.add_argument(
-        "--games", type=int, default=None,
-        help="only include the last N distinct games (by chronological order), instead of the whole log",
-    )
-    args = ap.parse_args()
-
+def run_once(args):
     reasoning = parse_reasoning_log(args.reasoning_log)
     events = parse_server_log(args.server_log)
     window = timedelta(seconds=args.window_seconds)
@@ -296,6 +285,50 @@ def main():
 
     games_note = f" [games: {', '.join(kept_games)}]" if kept_games else ""
     print(f"Wrote {len(merged)} decisions ({len(unmatched)} unmatched raw events) to {args.output} and {text_path}{games_note}")
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--reasoning-log", default="logs/ai_reasoning.jsonl")
+    ap.add_argument("--server-log", default="logs/ai-server.log")
+    ap.add_argument("--output", default="logs/merged_reasoning.jsonl")
+    ap.add_argument(
+        "--window-seconds", type=int, default=10,
+        help="max time gap (each direction) to associate a raw attempt with a decision",
+    )
+    ap.add_argument(
+        "--games", type=int, default=None,
+        help="only include the last N distinct games (by chronological order), instead of the whole log",
+    )
+    ap.add_argument(
+        "--watch", action="store_true",
+        help="re-run the merge on a timer instead of once, so an open editor "
+             "showing the output picks up new turns as they happen",
+    )
+    ap.add_argument(
+        "--watch-interval", type=float, default=5.0,
+        help="seconds between re-runs when --watch is set",
+    )
+    args = ap.parse_args()
+
+    if not args.watch:
+        run_once(args)
+        return
+
+    print(f"Watching (every {args.watch_interval}s) - Ctrl+C to stop")
+    try:
+        while True:
+            try:
+                run_once(args)
+            except FileNotFoundError as e:
+                # Likely a game just started and hasn't written anything yet -
+                # keep watching instead of dying.
+                print(f"  ({e}, will retry)")
+            time.sleep(args.watch_interval)
+    except KeyboardInterrupt:
+        print("\nStopped.")
 
 
 if __name__ == "__main__":
