@@ -43,7 +43,7 @@ services:
     volumes:
       - web-data:/app
     ports:
-      - "8080:8080"
+      - "${WEB_SERVER_PORT:-8082}:8080"
     depends_on:
       - ai-server
 

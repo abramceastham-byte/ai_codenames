@@ -51,6 +51,8 @@ export interface Game {
 	created_by: string; // UserID is string
 	status: 'PENDING' | 'PLAYING' | 'FINISHED';
 	state: GameState;
+	// Zero-value time ("0001-01-01T00:00:00Z") until the game leaves PENDING.
+	started_at: string;
 }
 
 export interface Clue {

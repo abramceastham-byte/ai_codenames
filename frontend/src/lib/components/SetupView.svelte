@@ -127,7 +127,7 @@
 		<button
 			onclick={() => joinRole(team, role)}
 			class="{classes} rounded-sm px-2 py-1 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50"
-			disabled={getPlayers(team, role).length > (role === 'OPERATIVE' ? 9 : 0)}
+			disabled={getPlayers(team, role).length > 0}
 		>
 			Join
 		</button>
@@ -150,7 +150,7 @@
 			<button
 				onclick={() => addAI(team, role)}
 				class="{classes} rounded-sm px-2 py-1 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50"
-				disabled={getPlayers(team, role).length > (role === 'OPERATIVE' ? 9 : 0)}
+				disabled={getPlayers(team, role).length > 0}
 			>
 				Add AI
 			</button>

@@ -341,6 +341,10 @@ func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID coden
 		role     codenames.Role
 		team     codenames.Team
 		lastClue *codenames.Clue
+		// activeTeam tracks whose turn it currently is, so OnPlayerVote can
+		// tell a live teammate vote from stale ones (e.g. a tentative tap
+		// left over from before the last guess resolved).
+		activeTeam codenames.Team
 		// teamClueCount mirrors the frontend's round-number logic
 		// (round = max of each team's clue count), so reasoning log entries can
 		// be cross-referenced with logs/all_games.csv by game_id+round+team.
@@ -379,6 +383,7 @@ func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID coden
 				return
 			}
 			log.Printf("Game %q started; I'm the %s %s", gID, team, role)
+			activeTeam = gs.Game.State.ActiveTeam
 
 			if role == codenames.SpymasterRole && gs.Game.State.ActiveTeam == team {
 				rc := reasoningCtx{gameID: gID, backend: backendName, team: team, round: predictedClueRound(team)}
@@ -396,6 +401,7 @@ func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID coden
 		},
 		OnClueGiven: func(cg *msgs.ClueGiven) {
 			teamClueCount[cg.Team]++
+			activeTeam = cg.Game.State.ActiveTeam
 
 			if cg.Team == team {
 				lastClue = cg.Clue
@@ -421,6 +427,8 @@ func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID coden
 			}
 		},
 		OnGuessGiven: func(gg *msgs.GuessGiven) {
+			activeTeam = gg.Game.State.ActiveTeam
+
 			// We only want to formulate a clue when the *other* team has just
 			// finished guessing.
 			if gg.Team != team && !gg.CanKeepGuessing && role == codenames.SpymasterRole {
@@ -455,6 +463,25 @@ func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID coden
 				}
 
 				return
+			}
+		},
+		OnPlayerVote: func(pv *msgs.PlayerVote) {
+			// Consensus requires every operative on the team to agree, and we
+			// otherwise only ever cast one independent vote per clue/guess
+			// event (above). If a human teammate is also an operative, our
+			// one guess has to exactly match theirs or the vote never
+			// resolves. Rather than requiring that coincidence, defer to a
+			// teammate's confirmed choice once they've locked one in.
+			if role != codenames.OperativeRole || activeTeam != team || !pv.Confirmed {
+				return
+			}
+			if pv.PlayerID.SameID(string(rID)) {
+				// Don't react to the vote we ourselves just cast.
+				return
+			}
+			log.Printf("Teammate voted %q, seconding it", pv.Guess)
+			if err := c.GiveGuess(gID, pv.Guess, true /* confirmed */); err != nil {
+				log.Printf("[ERROR] failed to second teammate's guess %q: %v", pv.Guess, err)
 			}
 		},
 	})

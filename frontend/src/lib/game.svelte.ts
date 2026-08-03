@@ -81,6 +81,16 @@ export class GameStore {
 		try {
 			this.game = await this.api.getGame(id);
 			this.players = await this.api.getGamePlayers(id);
+			// Recover the timer for a game we didn't see GAME_START for (e.g. a
+			// page reload, or opening the board after the game was already
+			// underway) — otherwise gameStartTime stays null and the elapsed
+			// timer is frozen at 0:00 forever.
+			if (this.gameStartTime === null && this.game.status !== 'PENDING') {
+				const startedAt = new Date(this.game.started_at).getTime();
+				if (!Number.isNaN(startedAt)) {
+					this.gameStartTime = startedAt;
+				}
+			}
 			this.connectWs(id);
 		} catch (e) {
 			this.error = 'Failed to load game: ' + e;
