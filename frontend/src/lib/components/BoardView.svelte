@@ -4,6 +4,7 @@
 	import CardComponent from './Card.svelte';
 	import GameControls from './GameControls.svelte';
 	import GameInfo from './GameInfo.svelte';
+	import TurnHistory from './TurnHistory.svelte';
 	import ClueHoldToggle from './ClueHoldToggle.svelte';
 	import type { Card, PlayerVote } from '$lib/types';
 	import { goto } from '$app/navigation';
@@ -65,6 +66,8 @@
 	<ClueHoldToggle />
 
 	<GameInfo />
+
+	<TurnHistory />
 
 	<div class="mb-8 grid grid-cols-5 gap-1 sm:gap-4">
 		{#if game?.state.board.cards}

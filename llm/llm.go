@@ -144,6 +144,7 @@ Rules:
 - Every word you list in "targets" must be one of YOUR team's words, spelled exactly as given.
 - Prefer 2 or 3 targets. Only list 4 or more if the connection is so natural that a person would spot it instantly.
 - Choose clues that feel intuitive and slightly creative, not just the most statistically obvious connection. Connecting words in an indirect or cultural way — the way a person would think of them — is good.
+- Weigh the score. If your team has notably more words left than the opponent, play it safe — a smaller, high-confidence clue that guarantees progress beats a big swing you might blow. If you're notably behind, it's worth the extra risk: a clue targeting more words at once, even if less certain, gives you a chance to catch up that a safe 1-word clue doesn't.
 
 Before finalizing your clue, explicitly ask yourself:
 - Is this clue associated with the assassin word in meaning, sound, or category? If an operative might connect it to the assassin, discard it and choose a different clue.
@@ -163,12 +164,15 @@ Example:
 
 	prompt := fmt.Sprintf(`You are the %s team spymaster.
 
+Score: your team has %d words left to find; the opponent has %d words left.
+
 Your team's words (you want these guessed): %s
 Opponent's words (avoid these): %s
 Bystanders (avoid these): %s
 Assassin (NEVER clue toward this): %s
 
 Give your clue:`, teamName,
+		len(myWords), len(opponentWords),
 		strings.Join(myWords, ", "),
 		strings.Join(opponentWords, ", "),
 		strings.Join(bystanders, ", "),
