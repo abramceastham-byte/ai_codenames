@@ -4,12 +4,22 @@ per-attempt model responses from the ai-server log into one chronological
 JSONL, for reviewing AI behavior during research trials.
 
 There's no shared request ID between the two log sources, so correlation is
-done by timestamp proximity (within --window-seconds). ai_reasoning.jsonl
-timestamps are UTC; the ai-server log's are in the local system timezone, so
-this converts the latter to UTC using the machine's current local offset
-before comparing. That's exact for logs generated the same day the script
-runs; if your trial data spans a DST transition, attempts near the boundary
-may drift out of their matching window - spot check those manually.
+done by timestamp: each decision claims the raw events between the *previous*
+decision's timestamp and its own (a raw response always happens before the
+decision that used it gets logged, never after), with --window-seconds only
+as a fallback cap for the first entry or an unusually large gap. A symmetric
+window was tried first and abandoned - back-to-back turns can be only a few
+seconds apart, which let an earlier decision steal a later one's response.
+This still assumes one game's turns aren't interleaved in wall-clock time
+with another game's (the raw log lines don't carry a game_id to disambiguate
+that) - fine for one game at a time, but multiple concurrent games could
+misattribute a raw attempt to the wrong game.
+
+ai_reasoning.jsonl timestamps are UTC; the ai-server log's are in the local
+system timezone, so this converts the latter to UTC using the machine's
+current local offset before comparing. That's exact for logs generated the
+same day the script runs; if your trial data spans a DST transition,
+attempts near the boundary may drift - spot check those manually.
 
 Anything that can't be matched to a nearby decision is still included,
 tagged as "unmatched_raw_event", so nothing is silently dropped.
@@ -248,14 +258,26 @@ def run_once(args):
     used = [False] * len(events)
 
     merged = []
+    prev_ts = None
     for entry in reasoning:
         ts = entry["_ts"]
         attempts = []
         if ts is not None:
+            # A decision's raw attempts always happen strictly before its own
+            # log line (the response is generated, then logged), never after.
+            # Bound the search to (previous decision's timestamp, this one's
+            # timestamp] rather than a symmetric window - back-to-back turns
+            # can be only a few seconds apart, and a wide symmetric window
+            # lets an earlier decision steal a later one's raw response.
+            # +/-2s pads for Go's whole-second log timestamps rounding
+            # differently than ai_reasoning.jsonl's sub-second UTC ones.
+            lo = ts - window if prev_ts is None else max(ts - window, prev_ts - timedelta(seconds=2))
+            hi = ts + timedelta(seconds=2)
             for i, ev in enumerate(events):
-                if not used[i] and ts - window <= ev["ts"] <= ts + window:
+                if not used[i] and lo <= ev["ts"] <= hi:
                     attempts.append(ev)
                     used[i] = True
+            prev_ts = ts
         attempts.sort(key=lambda e: e["ts"])
         merged.append({
             "timestamp": entry.get("timestamp"),
