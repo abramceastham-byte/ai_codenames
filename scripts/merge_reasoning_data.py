@@ -69,6 +69,19 @@ FAILED_RE = re.compile(
     r'\[ERROR\] AI failed to make a clue: (?P<error>.*)$'
 )
 
+# ai-server prints exactly one of these at startup, so a run testing several
+# models (restarting between each) leaves one line per model swap - the
+# model active for a given decision is whichever of these most recently
+# preceded it.
+LLM_LOAD_RE = re.compile(
+    r'^(?P<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) '
+    r'Loading LLM backend via Ollama at \S+ with model (?P<model>\S+)'
+)
+W2V_LOAD_RE = re.compile(
+    r'^(?P<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) '
+    r'Loading Word2Vec backend from (?P<glove>\S+) and (?P<conceptnet>\S+)'
+)
+
 # The local offset in effect right now on this machine, applied to every
 # server-log timestamp. See the DST caveat in the module docstring.
 LOCAL_TZINFO = datetime.now().astimezone().tzinfo
@@ -138,6 +151,53 @@ def parse_server_log(path):
     return events
 
 
+def parse_model_loads(path):
+    """Returns a chronological list of {"ts", "backend", "model"} - one
+    entry per ai-server startup found in the log."""
+    loads = []
+    try:
+        f = open(path, "r", encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return loads
+    with f:
+        for line in f:
+            line = line.rstrip("\n")
+
+            m = LLM_LOAD_RE.match(line)
+            if m:
+                loads.append({
+                    "ts": local_to_utc(datetime.strptime(m.group("ts"), SERVER_LOG_TS_FMT)),
+                    "backend": "llm",
+                    "model": m.group("model"),
+                })
+                continue
+
+            m = W2V_LOAD_RE.match(line)
+            if m:
+                loads.append({
+                    "ts": local_to_utc(datetime.strptime(m.group("ts"), SERVER_LOG_TS_FMT)),
+                    "backend": "w2v",
+                    "model": "w2v",
+                })
+
+    loads.sort(key=lambda e: e["ts"])
+    return loads
+
+
+def model_at(loads, ts):
+    """The model active at time ts: whichever load event most recently
+    preceded it. None if ts is before the first known load (or there were
+    none - e.g. the ai-server log was rotated/truncated since startup)."""
+    if ts is None:
+        return None
+    active = None
+    for load in loads:
+        if load["ts"] > ts:
+            break
+        active = load
+    return active["model"] if active else None
+
+
 def parse_reasoning_log(path):
     entries = []
     with open(path, "r", encoding="utf-8") as f:
@@ -190,9 +250,10 @@ def format_attempt_line(ev):
 
 
 def format_text_entry(m):
+    model_part = f'/{m["model"]}' if m.get("model") else ""
     lines = [
         "=" * 80,
-        f'Game: {m["game_id"]} | Round {m["round"]} | {m["team"]} {m["role"]} ({m["backend"]})',
+        f'Game: {m["game_id"]} | Round {m["round"]} | {m["team"]} {m["role"]} ({m["backend"]}{model_part})',
         f'Time: {m["timestamp"]}',
         f'Action: {m["action"]}',
         "-" * 80,
@@ -235,6 +296,7 @@ def write_text_transcript(path, merged, unmatched):
 def run_once(args):
     reasoning = parse_reasoning_log(args.reasoning_log)
     events = parse_server_log(args.server_log)
+    model_loads = parse_model_loads(args.server_log)
     window = timedelta(seconds=args.window_seconds)
 
     kept_games = None
@@ -286,6 +348,7 @@ def run_once(args):
             "team": entry.get("team"),
             "role": entry.get("role"),
             "backend": entry.get("backend"),
+            "model": model_at(model_loads, ts),
             "action": entry.get("action"),
             "final_detail": entry.get("detail"),
             "final_reasoning": entry.get("reasoning"),
