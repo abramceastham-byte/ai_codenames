@@ -4,6 +4,7 @@ package web
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -30,8 +31,23 @@ import (
 )
 
 const (
-	maxOperativesPerTeam = 10
+	// Each of the four role slots (per team, per role) holds exactly one
+	// player — spectators pick up any seat that's still open.
+	maxOperativesPerTeam = 1
 )
+
+// describeRole renders a role for a user-facing message, e.g. "a spymaster"
+// or "an operative".
+func describeRole(r codenames.Role) string {
+	switch r {
+	case codenames.SpymasterRole:
+		return "a spymaster"
+	case codenames.OperativeRole:
+		return "an operative"
+	default:
+		return "a " + strings.ToLower(string(r))
+	}
+}
 
 type Srv struct {
 	sc          *securecookie.SecureCookie
@@ -456,7 +472,6 @@ func (s *Srv) serveGameLog(w http.ResponseWriter, r *http.Request, p *codenames.
 			Type       string  `json:"type"`
 			Detail     string  `json:"detail"`
 			Result     string  `json:"result"`
-			Model      string  `json:"model"`
 			DurationMs float64 `json:"durationMs"`
 		} `json:"entries"`
 	}
@@ -468,27 +483,54 @@ func (s *Srv) serveGameLog(w http.ResponseWriter, r *http.Request, p *codenames.
 		return httperr.Internal("failed to create log dir: %w", err)
 	}
 
+	// The client can't tell us which backend played a given team/role — its
+	// player list is deliberately scrubbed of that (see sanitizePlayerID) so
+	// a fast/slow response can't out an AI mid-game. We backfill "model"
+	// ourselves from the AI server's reasoning log — the same source
+	// serveAdminGameLog uses — matched by team+role. That log only exists
+	// server-to-server and is never sent to a player, so this can't leak
+	// anything live; it only ever lands in this file, after the game.
+	backendFor := make(map[string]string) // "TEAM:ROLE" -> backend
+	if entries, err := s.ai.GetReasoning(game.ID); err != nil {
+		log.Printf("failed to fetch AI reasoning for game %q while saving log (leaving model column as \"human\"): %v", game.ID, err)
+	} else {
+		for _, e := range entries {
+			backendFor[string(e.Team)+":"+string(e.Role)] = e.Backend
+		}
+	}
+	modelFor := func(team, entryType string) string {
+		role := codenames.OperativeRole
+		if entryType == "clue" {
+			role = codenames.SpymasterRole
+		}
+		if backend, ok := backendFor[team+":"+string(role)]; ok {
+			return backend
+		}
+		return "human"
+	}
+
 	combinedPath := filepath.Join(s.logDir, "all_games.csv")
 
-	// Count existing games in the combined file to determine this game's number.
+	// Count existing games in the combined file to determine this game's
+	// number, and whether it already has a header row — driven off the same
+	// parse so the two can't disagree (e.g. a file with only a stray blank
+	// line is empty for both purposes, not just one).
 	gameNum := 1
+	needsHeader := true
 	if existing, err := os.Open(combinedPath); err == nil {
 		r2 := csv.NewReader(existing)
 		rows, _ := r2.ReadAll()
 		existing.Close()
-		seen := make(map[string]struct{})
-		for _, row := range rows[1:] { // skip header
-			if len(row) > 0 {
-				seen[row[0]] = struct{}{} // row[0] is game_num
+		if len(rows) > 0 {
+			needsHeader = false
+			seen := make(map[string]struct{})
+			for _, row := range rows[1:] { // skip header
+				if len(row) > 0 {
+					seen[row[0]] = struct{}{} // row[0] is game_num
+				}
 			}
+			gameNum = len(seen) + 1
 		}
-		gameNum = len(seen) + 1
-	}
-
-	// Append to combined file, writing header only if it doesn't exist yet.
-	needsHeader := false
-	if _, err := os.Stat(combinedPath); os.IsNotExist(err) {
-		needsHeader = true
 	}
 	f, err := os.OpenFile(combinedPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -510,7 +552,7 @@ func (s *Srv) serveGameLog(w http.ResponseWriter, r *http.Request, p *codenames.
 			e.Type,
 			e.Detail,
 			e.Result,
-			e.Model,
+			modelFor(e.Team, e.Type),
 			strconv.FormatFloat(e.DurationMs, 'f', 0, 64),
 		})
 	}
@@ -710,6 +752,11 @@ func (s *Srv) serveAssignRole(w http.ResponseWriter, r *http.Request, creator *c
 	// If no player_id is provided, default to the caller (self-assignment).
 	pID := req.PlayerID
 	if pID == (codenames.PlayerID{}) {
+		if userPR == nil {
+			return httperr.
+				BadRequest("player %q tried to assign a role in game %q without joining first", creator.ID, game.ID).
+				WithMessage("you need to join this game first")
+		}
 		pID = userPR.PlayerID
 	}
 
@@ -743,29 +790,19 @@ func (s *Srv) serveAssignRole(w http.ResponseWriter, r *http.Request, creator *c
 		// 		BadRequest("player %q tried to join game %q as %q %q, already joined as %q %q", pID, game.ID, desiredTeam, desiredRole, pr.Team, pr.Role).
 		// 		WithMessage(fmt.Sprintf("can't join game as %q %q, already joined as %q %q", desiredTeam, desiredRole, pr.Team, pr.Role))
 		// }
-		if pr.Role == codenames.SpymasterRole && rc[pr.Team] > 1 {
+		if rc[pr.Team] >= maxOperativesPerTeam {
 			return httperr.
-				Internal("game %q in bad state, team %q has multiple spymaster", game.ID, pr.Team).
-				WithMessage(fmt.Sprintf("multiple players set as %q spymaster", pr.Team))
-		}
-		if pr.Role == codenames.OperativeRole && rc[pr.Team] > maxOperativesPerTeam {
-			return httperr.
-				Internal("game %q in bad state, has too many players as %q operatives", game.ID, pr.Team).
-				WithMessage(fmt.Sprintf("too many players set as %q operatives", pr.Team))
+				Internal("game %q in bad state, team %q has multiple players as %q", game.ID, pr.Team, pr.Role).
+				WithMessage(fmt.Sprintf("multiple players set as %q %q", pr.Team, pr.Role))
 		}
 		rc[pr.Team]++
 		roleCount[pr.Role] = rc
 	}
 
-	if desiredRole == codenames.SpymasterRole && roleCount[codenames.SpymasterRole][desiredTeam] > 0 {
+	if roleCount[desiredRole][desiredTeam] >= maxOperativesPerTeam {
 		return httperr.
-			BadRequest("player %q wanted to be %q spymaster, but that role is already filled in game %q", pID, desiredTeam, game.ID).
-			WithMessage(fmt.Sprintf("team %q already has a spymaster", desiredTeam))
-	}
-	if desiredRole == codenames.OperativeRole && roleCount[codenames.OperativeRole][desiredTeam] >= maxOperativesPerTeam {
-		return httperr.
-			BadRequest("player %q wanted to be a %q operative, but that team already has the max number of operatives in game %q", pID, desiredTeam, game.ID).
-			WithMessage(fmt.Sprintf("team %q already has max operatives", desiredTeam))
+			BadRequest("player %q wanted to be %q %q, but that role is already filled in game %q", pID, desiredTeam, desiredRole, game.ID).
+			WithMessage(fmt.Sprintf("team %q already has %s", desiredTeam, describeRole(desiredRole)))
 	}
 
 	if err := s.db.AssignRole(game.ID, &codenames.PlayerRole{
@@ -773,6 +810,14 @@ func (s *Srv) serveAssignRole(w http.ResponseWriter, r *http.Request, creator *c
 		Team:     desiredTeam,
 		Role:     desiredRole,
 	}); err != nil {
+		if errors.Is(err, codenames.ErrRoleTaken) {
+			// We raced another request for the same slot; the DB layer is the
+			// authoritative check since it's atomic, unlike the roleCount scan
+			// above.
+			return httperr.
+				BadRequest("player %q wanted to be %q %q, but that role is already filled in game %q", pID, desiredTeam, desiredRole, game.ID).
+				WithMessage(fmt.Sprintf("team %q already has %s", desiredTeam, describeRole(desiredRole)))
+		}
 		return httperr.
 			Internal("failed to assign role (%q, %q) to player %q in game %q: %w", desiredTeam, desiredRole, pID, game.ID, err).
 			WithMessage("failed to assign role to player")
@@ -848,6 +893,7 @@ func (s *Srv) serveStartGame(w http.ResponseWriter, r *http.Request, p *codename
 			WithMessage("failed to start game")
 	}
 	game.Status = codenames.Playing
+	game.StartedAt = time.Now().UTC()
 
 	players, err := s.toPlayers(prs)
 	if err != nil {
@@ -884,25 +930,21 @@ func (s *Srv) finishAssigningRoles(game *codenames.Game, prs []*codenames.Player
 			WithMessage("you need at least four players to start")
 	}
 
-	// Start by marking both spymaster positions available.
-	availableSpymasterPos := map[codenames.Team]bool{
-		codenames.BlueTeam: true,
-		codenames.RedTeam:  true,
+	// Start by marking all four (team, role) slots available — every slot
+	// holds exactly one player.
+	availablePos := map[codenames.Role]map[codenames.Team]bool{
+		codenames.SpymasterRole: {codenames.BlueTeam: true, codenames.RedTeam: true},
+		codenames.OperativeRole: {codenames.BlueTeam: true, codenames.RedTeam: true},
 	}
 
-	// Now, find all the users without roles, and mark taking roles as such.
+	// Now, find all the users without roles, and mark taken slots as such.
 	var unassigned []*codenames.PlayerRole
 	for _, pr := range prs {
 		if !pr.RoleAssigned {
 			unassigned = append(unassigned, pr)
 			continue
 		}
-
-		// Only spymasters get marked as 'taken', since we can have any number of
-		// operatives.
-		if pr.Role == codenames.SpymasterRole {
-			availableSpymasterPos[pr.Team] = false
-		}
+		availablePos[pr.Role][pr.Team] = false
 	}
 
 	// Now, shuffle the unassigned users.
@@ -910,31 +952,31 @@ func (s *Srv) finishAssigningRoles(game *codenames.Game, prs []*codenames.Player
 		unassigned[i], unassigned[j] = unassigned[j], unassigned[i]
 	})
 
-	attemptAssignSpymaster := func(pr *codenames.PlayerRole) (bool, error) {
+	attemptAssign := func(pr *codenames.PlayerRole, role codenames.Role) (bool, error) {
 		for _, team := range []codenames.Team{codenames.RedTeam, codenames.BlueTeam} {
-			if !availableSpymasterPos[team] {
+			if !availablePos[role][team] {
 				continue
 			}
 
-			// Assign this player to the spymaster role, since it's available.
+			// Assign this player to the role, since it's available.
 			if err := s.db.AssignRole(game.ID, &codenames.PlayerRole{
 				PlayerID: pr.PlayerID,
 				Team:     team,
-				Role:     codenames.SpymasterRole,
+				Role:     role,
 			}); err != nil {
 				return false, httperr.
-					Internal("failed to assign %+v to %s spymaster: %w", pr.PlayerID, team, err).
+					Internal("failed to assign %+v to %s %s: %w", pr.PlayerID, team, role, err).
 					WithMessage("failed to randomly assign players")
 			}
-			availableSpymasterPos[team] = false
+			availablePos[role][team] = false
 			return true, nil
 		}
 		return false, nil
 	}
 
-	for i, pr := range unassigned {
-		// First, try to assign to spymaster roles.
-		assigned, err := attemptAssignSpymaster(pr)
+	for _, pr := range unassigned {
+		// First, try to assign to a spymaster slot.
+		assigned, err := attemptAssign(pr, codenames.SpymasterRole)
 		if err != nil {
 			return false, err
 		}
@@ -942,21 +984,10 @@ func (s *Srv) finishAssigningRoles(game *codenames.Game, prs []*codenames.Player
 			continue
 		}
 
-		// If there are no spymaster positions open, pick an operative team and
-		// assign them.
-		team := codenames.RedTeam
-		if i%2 == 1 {
-			team = codenames.BlueTeam
-		}
-
-		if err := s.db.AssignRole(game.ID, &codenames.PlayerRole{
-			PlayerID: pr.PlayerID,
-			Team:     team,
-			Role:     codenames.OperativeRole,
-		}); err != nil {
-			return false, httperr.
-				Internal("failed to assign %+v to %s operative: %w", pr.PlayerID, team, err).
-				WithMessage("failed to randomly assign players")
+		// Otherwise, try an operative slot. Once all four slots are full,
+		// this leaves the player unassigned — they spectate.
+		if _, err := attemptAssign(pr, codenames.OperativeRole); err != nil {
+			return false, err
 		}
 	}
 

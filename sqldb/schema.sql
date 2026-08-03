@@ -10,6 +10,7 @@ CREATE TABLE Games (
     state BLOB NOT NULL,
     creator_id TEXT NOT NULL,
     private BOOLEAN NOT NULL CHECK (private IN (0, 1)),
+    started_at DATETIME,  -- NULL until the game leaves PENDING
     FOREIGN KEY (creator_id) REFERENCES Users(id),
     PRIMARY KEY (id)
 );

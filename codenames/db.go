@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"time"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -17,6 +18,7 @@ var (
 	ErrUserNotFound            = errors.New("codenames: user not found")
 	ErrRobotNotFound           = errors.New("codenames: robot not found")
 	ErrGameNotFound            = errors.New("codenames: game not found")
+	ErrRoleTaken               = errors.New("codenames: role already assigned")
 )
 
 type PlayerType string
@@ -181,6 +183,8 @@ type Game struct {
 	CreatedBy UserID     `json:"created_by"`
 	Status    GameStatus `json:"status"`
 	State     *GameState `json:"state"`
+	// StartedAt is the zero time until the game transitions out of Pending.
+	StartedAt time.Time `json:"started_at"`
 }
 
 func (g *Game) Clone() *Game {
@@ -193,6 +197,7 @@ func (g *Game) Clone() *Game {
 		CreatedBy: g.CreatedBy,
 		Status:    g.Status,
 		State:     g.State.Clone(),
+		StartedAt: g.StartedAt,
 	}
 }
 

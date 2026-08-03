@@ -12,6 +12,7 @@ import (
 	"log"
 	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/bcspragu/Codenames/codenames"
 
@@ -25,11 +26,11 @@ var (
 	// Game statements
 	createGameStmt      = `INSERT INTO Games (id, status, creator_id, state, private) VALUES (?, ?, ?, ?, ?)`
 	gameExistsStmt      = `SELECT EXISTS(SELECT 1 FROM Games WHERE id = ?)`
-	getGameStmt         = `SELECT id, status, creator_id, state FROM Games WHERE id = ?`
+	getGameStmt         = `SELECT id, status, creator_id, state, started_at FROM Games WHERE id = ?`
 	getPendingGamesStmt = `SELECT id FROM Games WHERE status = 'PENDING' AND private = 0 ORDER BY id`
 	startGameStmt       = `
 UPDATE Games
-SET status = 'PLAYING'
+SET status = 'PLAYING', started_at = ?
 WHERE id = ?`
 	updateGameStateStmt = `
 UPDATE Games
@@ -60,13 +61,25 @@ DELETE FROM GamePlayers
 WHERE game_id = ?
 	AND player_id = ?`
 
+	// Refuses to assign a role if another player already holds that exact
+	// (team, role) slot, so two concurrent requests can't both succeed —
+	// this runs as a single atomic statement against the connection instead
+	// of a separate check-then-write.
 	assignRoleStmt = `
 UPDATE GamePlayers
 SET role_assigned = 1,
 		role = ?,
 		team = ?
 WHERE game_id = ?
-	AND player_id = ?`
+	AND player_id = ?
+	AND NOT EXISTS (
+		SELECT 1 FROM GamePlayers gp2
+		WHERE gp2.game_id = GamePlayers.game_id
+			AND gp2.team = ?
+			AND gp2.role = ?
+			AND gp2.role_assigned = 1
+			AND gp2.player_id != GamePlayers.player_id
+	)`
 	getGamePlayers = `
 SELECT Players.user_id, Players.ai_id, GamePlayers.role, GamePlayers.team, GamePlayers.role_assigned
 FROM GamePlayers
@@ -131,6 +144,14 @@ func New(fn string, r *rand.Rand) (*DB, error) {
 		return nil, fmt.Errorf("failed to check for existing schema: %w", err)
 	}
 
+	// The schema is only ever applied once (above), so a column added after a
+	// database was first created has to be backfilled by hand for existing
+	// files.
+	if err := addColumnIfMissing(sdb, "Games", "started_at", "DATETIME"); err != nil {
+		sdb.Close()
+		return nil, fmt.Errorf("failed to migrate Games table: %w", err)
+	}
+
 	db := &DB{
 		sdb:      sdb,
 		doneChan: make(chan struct{}),
@@ -140,6 +161,42 @@ func New(fn string, r *rand.Rand) (*DB, error) {
 		r: r,
 	}
 	return db, nil
+}
+
+// addColumnIfMissing runs an idempotent `ALTER TABLE ... ADD COLUMN` for
+// databases created before schemaSQL gained this column. SQLite lacks "ADD
+// COLUMN IF NOT EXISTS", so we check PRAGMA table_info first.
+func addColumnIfMissing(sdb *sql.DB, table, column, sqlType string) error {
+	rows, err := sdb.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return fmt.Errorf("failed to inspect table %q: %w", table, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			dfltValue  any
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &primaryKey); err != nil {
+			return fmt.Errorf("failed to scan table_info row: %w", err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to read table_info rows: %w", err)
+	}
+
+	if _, err := sdb.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, sqlType)); err != nil {
+		return fmt.Errorf("failed to add column %q to table %q: %w", column, table, err)
+	}
+	return nil
 }
 
 func (s *DB) Close() error {
@@ -173,12 +230,16 @@ func (s *DB) NewGame(g *codenames.Game, private bool) (codenames.GameID, error) 
 func (s *DB) Game(gID codenames.GameID) (*codenames.Game, error) {
 
 	var (
-		g   codenames.Game
-		gsb []byte
-		err error
+		g         codenames.Game
+		gsb       []byte
+		startedAt sql.NullTime
+		err       error
 	)
-	if err := s.sdb.QueryRow(getGameStmt, string(gID)).Scan(&g.ID, &g.Status, &g.CreatedBy, &gsb); err != nil {
+	if err := s.sdb.QueryRow(getGameStmt, string(gID)).Scan(&g.ID, &g.Status, &g.CreatedBy, &gsb, &startedAt); err != nil {
 		return nil, err
+	}
+	if startedAt.Valid {
+		g.StartedAt = startedAt.Time
 	}
 
 	if g.State, err = gameStateFromBytes(gsb); err != nil {
@@ -389,7 +450,7 @@ func (s *DB) AssignRole(gID codenames.GameID, req *codenames.PlayerRole) error {
 	}
 
 	// If we're here, we've got a player ID and we can add them to the game.
-	res, err := s.sdb.Exec(assignRoleStmt, string(req.Role), string(req.Team), gID, pID)
+	res, err := s.sdb.Exec(assignRoleStmt, string(req.Role), string(req.Team), gID, pID, string(req.Team), string(req.Role))
 	if err != nil {
 		return fmt.Errorf("failed to assign role: %w", err)
 	}
@@ -398,7 +459,10 @@ func (s *DB) AssignRole(gID codenames.GameID, req *codenames.PlayerRole) error {
 		return fmt.Errorf("failed to get the number of affected rows: %w", err)
 	}
 	if numRows != 1 {
-		return fmt.Errorf("%d rows affected, expected exactly 1", numRows)
+		// Either the player's row doesn't exist, or (far more likely, given
+		// they already joined the game) another player won the race for
+		// this (team, role) slot.
+		return codenames.ErrRoleTaken
 	}
 	return nil
 }
@@ -506,7 +570,7 @@ func groupedArgs(n int) string {
 }
 
 func (s *DB) StartGame(gID codenames.GameID) error {
-	if _, err := s.sdb.Exec(startGameStmt, gID); err != nil {
+	if _, err := s.sdb.Exec(startGameStmt, time.Now().UTC(), gID); err != nil {
 		return err
 	}
 	return nil

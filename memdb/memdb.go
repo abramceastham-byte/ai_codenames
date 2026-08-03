@@ -5,6 +5,7 @@ package memdb
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/bcspragu/Codenames/codenames"
 )
@@ -230,6 +231,12 @@ func (db *DB) AssignRole(gID codenames.GameID, req *codenames.PlayerRole) error 
 	}
 
 	for _, pr := range prs {
+		if pr.PlayerID != req.PlayerID && pr.RoleAssigned && pr.Role == req.Role && pr.Team == req.Team {
+			return codenames.ErrRoleTaken
+		}
+	}
+
+	for _, pr := range prs {
 		if pr.PlayerID == req.PlayerID {
 			pr.Role = req.Role
 			pr.Team = req.Team
@@ -268,6 +275,7 @@ func (db *DB) StartGame(gID codenames.GameID) error {
 
 	return db.updateGame(gID, func(g *codenames.Game) {
 		g.Status = codenames.Playing
+		g.StartedAt = time.Now()
 	})
 }
 

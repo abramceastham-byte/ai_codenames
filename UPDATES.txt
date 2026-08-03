@@ -17,7 +17,7 @@ UPDATES
 ================================================================================
 
 Date:     2026-06-10
-Commit:   uncommitted
+Commit:   committed
 Files:    codenames/codenames.go, w2v/w2v.go, llm/llm.go,
           cmd/ai-server/server.go, frontend/src/lib/game.svelte.ts
 Summary:
@@ -42,7 +42,7 @@ Summary:
 --------------------------------------------------------------------------------
 
 Date:     2026-06-10
-Commit:   uncommitted
+Commit:   committed
 Files:    names/names.go (new), web/web.go, web/web_test.go,
           cmd/ai-server/server.go, frontend/src/lib/api.ts,
           frontend/src/lib/game.svelte.ts, frontend/src/routes/login/+page.svelte
