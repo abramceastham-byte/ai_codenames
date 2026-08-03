@@ -24,6 +24,9 @@ Usage:
         --reasoning-log logs/ai_reasoning.jsonl \
         --server-log logs/ai-server.log \
         --output logs/merged_reasoning.jsonl
+
+    # Just the last 3 games instead of the whole accumulated log:
+    python3 scripts/merge_reasoning_data.py --games 3
 """
 import argparse
 import json
@@ -199,12 +202,35 @@ def main():
         "--window-seconds", type=int, default=10,
         help="max time gap (each direction) to associate a raw attempt with a decision",
     )
+    ap.add_argument(
+        "--games", type=int, default=None,
+        help="only include the last N distinct games (by chronological order), instead of the whole log",
+    )
     args = ap.parse_args()
 
     reasoning = parse_reasoning_log(args.reasoning_log)
     events = parse_server_log(args.server_log)
-    used = [False] * len(events)
     window = timedelta(seconds=args.window_seconds)
+
+    kept_games = None
+    if args.games:
+        seen_order = []
+        for entry in reasoning:
+            gid = entry.get("game_id")
+            if gid not in seen_order:
+                seen_order.append(gid)
+        kept_games = seen_order[-args.games:]
+        keep_games = set(kept_games)
+        reasoning = [e for e in reasoning if e.get("game_id") in keep_games]
+
+        # Also drop raw events far outside the kept games' time range, so
+        # "unmatched" doesn't dump in unrelated history from other games.
+        ts_values = [e["_ts"] for e in reasoning if e["_ts"] is not None]
+        if ts_values:
+            lo, hi = min(ts_values) - window, max(ts_values) + window
+            events = [ev for ev in events if lo <= ev["ts"] <= hi]
+
+    used = [False] * len(events)
 
     merged = []
     for entry in reasoning:
@@ -242,7 +268,8 @@ def main():
     text_path = Path(args.output).with_suffix(".txt")
     write_text_transcript(text_path, merged, unmatched)
 
-    print(f"Wrote {len(merged)} decisions ({len(unmatched)} unmatched raw events) to {args.output} and {text_path}")
+    games_note = f" [games: {', '.join(kept_games)}]" if kept_games else ""
+    print(f"Wrote {len(merged)} decisions ({len(unmatched)} unmatched raw events) to {args.output} and {text_path}{games_note}")
 
 
 if __name__ == "__main__":
