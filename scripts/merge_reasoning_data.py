@@ -77,7 +77,15 @@ def parse_server_log(path):
     """Returns a chronological list of raw attempt/rejection/failure events,
     each with a "ts" key holding a UTC-aware datetime."""
     events = []
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
+    try:
+        f = open(path, "r", encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        # The ai-server logs to stdout by default; this file only exists if
+        # someone redirected it themselves. Raw attempts are a bonus
+        # correlation on top of ai_reasoning.jsonl, not a requirement.
+        print(f"WARNING: {path} not found, continuing without raw attempt data")
+        return events
+    with f:
         for line in f:
             line = line.rstrip("\n")
 
@@ -118,11 +126,29 @@ def parse_server_log(path):
 def parse_reasoning_log(path):
     entries = []
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
+        for lineno, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
-            entry = json.loads(line)
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                # A process killed mid-write (e.g. a server restart) can
+                # leave a few stray bytes glued onto the front of the next
+                # line, since the file is append-only and nothing rewinds
+                # past a partial write. That garbage is always a prefix
+                # before the real '{', so recover by reparsing from there
+                # rather than losing the entry outright.
+                brace = line.find("{")
+                if brace <= 0:
+                    print(f"WARNING: skipping unparseable line {lineno} in {path}: {line[:80]!r}")
+                    continue
+                try:
+                    entry = json.loads(line[brace:])
+                    print(f"WARNING: recovered line {lineno} in {path} after stripping leading {line[:brace]!r}")
+                except json.JSONDecodeError:
+                    print(f"WARNING: skipping unparseable line {lineno} in {path}: {line[:80]!r}")
+                    continue
             raw_ts = entry.get("timestamp", "")
             try:
                 entry["_ts"] = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))

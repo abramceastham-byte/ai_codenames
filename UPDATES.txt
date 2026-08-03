@@ -103,32 +103,3 @@ TO-DO LIST
 ================================================================================
 Fill in as needed. Mark items: [ ] = open, [x] = done
 
-[x] Add a "pass" action to the game protocol so AI operatives can stop
-    guessing early when unsure (enables human-like hesitation).
-[x] Make the w2v guesser less mechanical (e.g., skip guesses below a
-    confidence threshold once passing exists).
-[x] Change the name of the AI players to be random generated usernames like the users. All users
-    and AIs must have a similar randomly generated name to take guessing names out of the equation.
-[x] Change the log to only display for admins and not to those are playing the game.
-    Added /api/admin/game/{id}/log on codenames-server, gated by an ADMIN_SECRET
-    shared secret (X-Admin-Secret header or admin_secret query param). It's not
-    linked from any player-facing UI; a standalone /admin/[gameId] page exists
-    for developer use only.
-[ ] Check the log functionality, games should save to a log.txt file with all data.
-[x] Make sure when the log does display for admins, when a w2v model plays it should
-    say W2V under MODEL and when an LLM plays it should say LLM
-    (NOTE: the old name-prefix detection broke when usernames went random;
-    the backend needs to expose player type + AI backend to fix this properly.)
-    Done via the admin endpoint above: it joins the DB player roster with the
-    ai-server's per-move reasoning log (backend + reasoning text), fetched
-    through a new GET /reasoning endpoint on ai-server. Also fixed a related
-    leak: player_type and the random human_/robot_ ID prefixes are no longer
-    sent to regular players in any WS/REST payload (see msgs.Player,
-    msgs.PlayerVote, and codenames.RandomUserID/RandomRobotID).
-[x] Make the LLM be scared of risk.
-  Before finalizing your clue, explicitly ask yourself:
-- Could any of my target words be mistaken for the opponent's words?
-- Is there any bystander or assassin word that shares my clue?
-- If yes, reduce your count or choose a safer clue.
-  Never give a count higher than the number of words you are 
-  highly confident about. Uncertainty = lower count.

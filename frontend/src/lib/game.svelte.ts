@@ -86,7 +86,7 @@ export class GameStore {
 			// underway) — otherwise gameStartTime stays null and the elapsed
 			// timer is frozen at 0:00 forever.
 			if (this.gameStartTime === null && this.game.status !== 'PENDING') {
-				const startedAt = new Date(this.game.started_at).getTime();
+				const startedAt = Date.parse(this.game.started_at);
 				if (!Number.isNaN(startedAt)) {
 					this.gameStartTime = startedAt;
 				}

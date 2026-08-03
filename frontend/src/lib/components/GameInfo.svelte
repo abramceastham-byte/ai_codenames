@@ -27,7 +27,9 @@
 
 	// Live timer
 	let now = $state(Date.now());
-	const ticker = setInterval(() => { now = Date.now(); }, 1000);
+	const ticker = setInterval(() => {
+		now = Date.now();
+	}, 1000);
 	onDestroy(() => clearInterval(ticker));
 
 	function formatElapsed(startTime: number | null, endTime: number | null): string {
