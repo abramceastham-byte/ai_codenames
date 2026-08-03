@@ -14,6 +14,11 @@ may drift out of their matching window - spot check those manually.
 Anything that can't be matched to a nearby decision is still included,
 tagged as "unmatched_raw_event", so nothing is silently dropped.
 
+Alongside the JSONL, this also writes a plain-text transcript (same path,
+.txt extension) meant for actually reading through - one block per
+clue/guess in chronological order, with the final result and every raw
+attempt that led to it.
+
 Usage:
     python3 scripts/merge_reasoning_data.py \
         --reasoning-log logs/ai_reasoning.jsonl \
@@ -24,6 +29,7 @@ import argparse
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 SERVER_LOG_TS_FMT = "%Y/%m/%d %H:%M:%S"
 
@@ -128,6 +134,60 @@ def event_to_json(ev):
     return {k: (v.isoformat() if k == "ts" else v) for k, v in ev.items()}
 
 
+def format_attempt_line(ev):
+    if ev["type"] == "attempt":
+        clue_part = f'clue={ev["clue"]!r} ' if ev.get("clue") else ""
+        return f'  [attempt {ev["attempt"]}] {clue_part}raw response: {ev["raw_response"]}'
+    if ev["type"] == "rejected":
+        return f'  [attempt {ev["attempt"]}] REJECTED: {ev["reason"]}'
+    if ev["type"] == "failed":
+        return f'  [failed] {ev["error"]}'
+    return f"  [unknown event] {ev}"
+
+
+def format_text_entry(m):
+    lines = [
+        "=" * 80,
+        f'Game: {m["game_id"]} | Round {m["round"]} | {m["team"]} {m["role"]} ({m["backend"]})',
+        f'Time: {m["timestamp"]}',
+        f'Action: {m["action"]}',
+        "-" * 80,
+    ]
+    if m["final_detail"]:
+        lines.append(f'Result: {m["final_detail"]}')
+    if m["final_reasoning"]:
+        lines.append(f'Reasoning: {m["final_reasoning"]}')
+    if m["error"]:
+        lines.append(f'ERROR: {m["error"]}')
+    if m["suspected_compound"]:
+        lines.append(f'Suspected compound: {m["suspected_compound"]}')
+
+    if m["raw_attempts"]:
+        lines.append("")
+        lines.append("Attempts:")
+        for ev in m["raw_attempts"]:
+            lines.append(format_attempt_line(ev))
+    else:
+        lines.append("")
+        lines.append("(no raw attempts matched)")
+
+    return "\n".join(lines)
+
+
+def write_text_transcript(path, merged, unmatched):
+    with open(path, "w", encoding="utf-8") as out:
+        for m in merged:
+            out.write(format_text_entry(m) + "\n\n")
+        if unmatched:
+            out.write("=" * 80 + "\n")
+            out.write(f"UNMATCHED RAW EVENTS ({len(unmatched)})\n")
+            out.write("no nearby decision in ai_reasoning.jsonl to attach these to\n")
+            out.write("-" * 80 + "\n")
+            for ev in unmatched:
+                out.write(f'{ev["ts"]}\n')
+                out.write(format_attempt_line(ev) + "\n\n")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -179,7 +239,10 @@ def main():
         for u in unmatched:
             out.write(json.dumps({"unmatched_raw_event": u}, ensure_ascii=False) + "\n")
 
-    print(f"Wrote {len(merged)} decisions ({len(unmatched)} unmatched raw events) to {args.output}")
+    text_path = Path(args.output).with_suffix(".txt")
+    write_text_transcript(text_path, merged, unmatched)
+
+    print(f"Wrote {len(merged)} decisions ({len(unmatched)} unmatched raw events) to {args.output} and {text_path}")
 
 
 if __name__ == "__main__":
