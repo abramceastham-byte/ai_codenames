@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""Merge logs/ai_reasoning.jsonl (structured final decisions) with the raw
+per-attempt model responses from the ai-server log into one chronological
+JSONL, for reviewing AI behavior during research trials.
+
+There's no shared request ID between the two log sources, so correlation is
+done by timestamp proximity (within --window-seconds). ai_reasoning.jsonl
+timestamps are UTC; the ai-server log's are in the local system timezone, so
+this converts the latter to UTC using the machine's current local offset
+before comparing. That's exact for logs generated the same day the script
+runs; if your trial data spans a DST transition, attempts near the boundary
+may drift out of their matching window - spot check those manually.
+
+Anything that can't be matched to a nearby decision is still included,
+tagged as "unmatched_raw_event", so nothing is silently dropped.
+
+Usage:
+    python3 scripts/merge_reasoning_data.py \
+        --reasoning-log logs/ai_reasoning.jsonl \
+        --server-log logs/ai-server.log \
+        --output logs/merged_reasoning.jsonl
+"""
+import argparse
+import json
+import re
+from datetime import datetime, timedelta, timezone
+
+SERVER_LOG_TS_FMT = "%Y/%m/%d %H:%M:%S"
+
+# Matches both:
+#   [LLM Spymaster] attempt=1, raw response: "..."
+#   [LLM Operative] clue="word", attempt=1, raw response: "..."
+ATTEMPT_RE = re.compile(
+    r'^(?P<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) '
+    r'\[LLM (?P<role>Spymaster|Operative)\] '
+    r'(?:clue=(?P<clue>".*?"), )?'
+    r'attempt=(?P<attempt>\d+), raw response: (?P<response>".*")$'
+)
+REJECTED_RE = re.compile(
+    r'^(?P<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) '
+    r'\[LLM Spymaster\] rejected attempt=(?P<attempt>\d+): (?P<reason>.*)$'
+)
+FAILED_RE = re.compile(
+    r'^(?P<ts>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) '
+    r'\[ERROR\] AI failed to make a clue: (?P<error>.*)$'
+)
+
+# The local offset in effect right now on this machine, applied to every
+# server-log timestamp. See the DST caveat in the module docstring.
+LOCAL_TZINFO = datetime.now().astimezone().tzinfo
+
+
+def parse_go_quoted(s):
+    """Go's %q output is close enough to JSON string syntax to decode directly."""
+    if s is None:
+        return None
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return s
+
+
+def local_to_utc(naive_local_ts):
+    return naive_local_ts.replace(tzinfo=LOCAL_TZINFO).astimezone(timezone.utc)
+
+
+def parse_server_log(path):
+    """Returns a chronological list of raw attempt/rejection/failure events,
+    each with a "ts" key holding a UTC-aware datetime."""
+    events = []
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.rstrip("\n")
+
+            m = ATTEMPT_RE.match(line)
+            if m:
+                events.append({
+                    "ts": local_to_utc(datetime.strptime(m.group("ts"), SERVER_LOG_TS_FMT)),
+                    "type": "attempt",
+                    "role": m.group("role"),
+                    "attempt": int(m.group("attempt")),
+                    "clue": parse_go_quoted(m.group("clue")),
+                    "raw_response": parse_go_quoted(m.group("response")),
+                })
+                continue
+
+            m = REJECTED_RE.match(line)
+            if m:
+                events.append({
+                    "ts": local_to_utc(datetime.strptime(m.group("ts"), SERVER_LOG_TS_FMT)),
+                    "type": "rejected",
+                    "attempt": int(m.group("attempt")),
+                    "reason": m.group("reason"),
+                })
+                continue
+
+            m = FAILED_RE.match(line)
+            if m:
+                events.append({
+                    "ts": local_to_utc(datetime.strptime(m.group("ts"), SERVER_LOG_TS_FMT)),
+                    "type": "failed",
+                    "error": m.group("error"),
+                })
+
+    events.sort(key=lambda e: e["ts"])
+    return events
+
+
+def parse_reasoning_log(path):
+    entries = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            entry = json.loads(line)
+            raw_ts = entry.get("timestamp", "")
+            try:
+                entry["_ts"] = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+            except ValueError:
+                entry["_ts"] = None
+            entries.append(entry)
+    entries.sort(key=lambda e: e["_ts"] or datetime.min.replace(tzinfo=timezone.utc))
+    return entries
+
+
+def event_to_json(ev):
+    return {k: (v.isoformat() if k == "ts" else v) for k, v in ev.items()}
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--reasoning-log", default="logs/ai_reasoning.jsonl")
+    ap.add_argument("--server-log", default="logs/ai-server.log")
+    ap.add_argument("--output", default="logs/merged_reasoning.jsonl")
+    ap.add_argument(
+        "--window-seconds", type=int, default=10,
+        help="max time gap (each direction) to associate a raw attempt with a decision",
+    )
+    args = ap.parse_args()
+
+    reasoning = parse_reasoning_log(args.reasoning_log)
+    events = parse_server_log(args.server_log)
+    used = [False] * len(events)
+    window = timedelta(seconds=args.window_seconds)
+
+    merged = []
+    for entry in reasoning:
+        ts = entry["_ts"]
+        attempts = []
+        if ts is not None:
+            for i, ev in enumerate(events):
+                if not used[i] and ts - window <= ev["ts"] <= ts + window:
+                    attempts.append(ev)
+                    used[i] = True
+        attempts.sort(key=lambda e: e["ts"])
+        merged.append({
+            "timestamp": entry.get("timestamp"),
+            "game_id": entry.get("game_id"),
+            "round": entry.get("round"),
+            "team": entry.get("team"),
+            "role": entry.get("role"),
+            "backend": entry.get("backend"),
+            "action": entry.get("action"),
+            "final_detail": entry.get("detail"),
+            "final_reasoning": entry.get("reasoning"),
+            "error": entry.get("error") or None,
+            "suspected_compound": entry.get("suspected_compound") or None,
+            "raw_attempts": [event_to_json(ev) for ev in attempts],
+        })
+
+    unmatched = [event_to_json(ev) for i, ev in enumerate(events) if not used[i]]
+
+    with open(args.output, "w", encoding="utf-8") as out:
+        for m in merged:
+            out.write(json.dumps(m, ensure_ascii=False) + "\n")
+        for u in unmatched:
+            out.write(json.dumps({"unmatched_raw_event": u}, ensure_ascii=False) + "\n")
+
+    print(f"Wrote {len(merged)} decisions ({len(unmatched)} unmatched raw events) to {args.output}")
+
+
+if __name__ == "__main__":
+    main()
