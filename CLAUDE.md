@@ -43,22 +43,34 @@ AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenam
 # Terminal 2 — frontend (port 5173)
 cd frontend && pnpm run dev
 
-# Terminal 3 — AI server (port 8081, requires model files; run
-# `scripts/setup_models.sh` once to fetch them if data/glove.bin and
-# data/conceptnet.bin don't exist yet — requires python3)
-GLOVE_MODEL_PATH=data/glove.bin \
-CONCEPT_NET_MODEL_PATH=data/conceptnet.bin \
-COMMON_WORDLIST=data/common_words_filtered.txt \
+# Terminal 3 — AI server (port 8081, LLM backend only; no model files needed)
 AUTH_SECRET=abc123 \
 WEB_SERVER_ENDPOINT=http://localhost:8080 \
-ENABLED_BACKENDS=w2v,llm \
-DEFAULT_BACKEND=w2v \
+ENABLED_BACKENDS=llm \
+DEFAULT_BACKEND=llm \
 OLLAMA_ENDPOINT=http://localhost:11434 \
-OLLAMA_MODEL=llama3 \
+OLLAMA_MODEL=qwq:32b \
 go run ./cmd/ai-server/
 ```
 
-Then open `http://localhost:5173`. The `llm` backend requires [Ollama](https://ollama.com) running with the model pulled (e.g. `ollama pull llama3`); drop `llm` from `ENABLED_BACKENDS` if you only want the w2v player.
+Then open `http://localhost:5173`. The `llm` backend requires [Ollama](https://ollama.com) running with the model pulled (e.g. `ollama pull qwq:32b` — a ~20GB download); drop `llm` from `ENABLED_BACKENDS` if you only want the w2v player.
+
+`qwq:32b` is a reasoning model: it "thinks" via inline `<think>...</think>` markup, which `llm/llm.go` pulls out before parsing the final answer and folds into the reasoning logged to `logs/ai_reasoning.jsonl` (visible via `/admin/{gameId}`) instead of discarding it. Expect much slower responses than a small instruct model like the old default (`llama3`) — `llm.DefaultTimeout` and the per-guess timeout budget in `llm/llm.go` are sized accordingly. qwq has no way to disable its `<think>` block, so it always pays this cost.
+
+For faster responses, swap in a model that supports disabling reasoning (e.g. `qwen3:30b-a3b`) and pass `--ollama_think=false`:
+
+```bash
+# Terminal 3 — AI server, qwen3 with thinking disabled (faster, less deliberate)
+AUTH_SECRET=abc123 \
+WEB_SERVER_ENDPOINT=http://localhost:8080 \
+ENABLED_BACKENDS=llm \
+DEFAULT_BACKEND=llm \
+OLLAMA_ENDPOINT=http://localhost:11434 \
+OLLAMA_MODEL=qwen3:30b-a3b \
+go run ./cmd/ai-server/ --ollama_think=false
+```
+
+`--ollama_think` (`true`/`false`, unset by default) sets Ollama's top-level `think` field, which forces reasoning on/off on models that support toggling it. Leaving it unset sends nothing and lets the model use its own default — the right choice for qwq, since it has no toggle. Other tunables: `--ollama_max_tokens` (num_predict budget, thinking + answer), `--ollama_timeout`, `--ollama_temperature`, `--ollama_seed` (fixes sampling for reproducible research runs).
 
 ### Running Locally (Docker Compose)
 
@@ -111,7 +123,7 @@ SvelteKit is configured as a fully static SPA (`adapter-static`, `fallback: '200
 | `ENABLED_BACKENDS` | AI server | Comma-separated backends to load (`w2v`, `llm`) |
 | `DEFAULT_BACKEND` | AI server | Backend used when caller doesn't specify |
 | `OLLAMA_ENDPOINT` | AI server | Ollama URL for the `llm` backend (default `http://localhost:11434`) |
-| `OLLAMA_MODEL` | AI server | Ollama model name for the `llm` backend (default `llama3`) |
+| `OLLAMA_MODEL` | AI server | Ollama model name for the `llm` backend (default `qwq:32b`) |
 
 The web server also accepts `--addr` (default `:8080`), `--db_path` (default `codenames.db`), `--clue_delay` (default `60s`, `0` to disable), and `--hash_key_path`/`--block_key_path` for secure cookie keys (auto-generated if missing).
 

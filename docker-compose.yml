@@ -23,7 +23,7 @@ services:
       ENABLED_BACKENDS: ${ENABLED_BACKENDS:-w2v}
       DEFAULT_BACKEND: ${DEFAULT_BACKEND:-w2v}
       OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwq:32b}
     volumes:
       - model-data:/data:ro
       - ai-logs:/app/logs

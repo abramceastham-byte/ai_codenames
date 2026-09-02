@@ -169,11 +169,12 @@
 			<div class="group flex items-center gap-2">
 				<div class="h-2 w-2 rounded-full {dotClass}"></div>
 				<span class="flex-1">{p.name}</span>
-				{#if isCreator && p.player_id.id !== game?.created_by}
+				{#if p.player_id.id !== game?.created_by && (p.player_id.id === user?.id || isCreator)}
+					{@const isSelf = p.player_id.id === user?.id}
 					<button
 						onclick={() => removePlayer(p)}
-						title="Remove {p.name} from the game"
-						aria-label="Remove {p.name} from the game"
+						title={isSelf ? 'Leave this role' : `Remove ${p.name} from the game`}
+						aria-label={isSelf ? 'Leave this role' : `Remove ${p.name} from the game`}
 						class="rounded-sm px-1.5 text-xs font-bold text-gray-400 opacity-0 group-hover:opacity-100 hover:bg-gray-100 hover:text-red-600 focus:opacity-100"
 					>
 						&times;

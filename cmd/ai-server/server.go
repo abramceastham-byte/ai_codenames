@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/bcspragu/Codenames/client"
 	"github.com/bcspragu/Codenames/codenames"
 	"github.com/bcspragu/Codenames/httperr"
+	"github.com/bcspragu/Codenames/llm"
 	"github.com/bcspragu/Codenames/msgs"
 )
 
@@ -87,6 +89,46 @@ type reasoningLogEntry struct {
 	// visible defect in the instrument. Logging them yields labeled data on
 	// how often this actually fires across real games.
 	SuspectedCompound string `json:"suspected_compound,omitempty"`
+
+	// The fields below are populated for Action == "guess" only, capturing
+	// the confidence-scored candidate decision (see llm.GuessWithCandidates)
+	// so thresholds can be re-tuned against logged data without re-running
+	// games. They're all omitempty since non-LLM backends (w2v) and older log
+	// entries won't have them.
+	RawResponse            string              `json:"raw_response,omitempty"`
+	Candidates             []guessCandidateLog `json:"candidates,omitempty"`
+	RiskiestBoardWord      string              `json:"riskiest_board_word,omitempty"`
+	TopCandidateIsRiskiest bool                `json:"top_candidate_is_riskiest,omitempty"`
+	MustGuess              bool                `json:"must_guess,omitempty"`
+	GuessesThisTurn        int                 `json:"guesses_this_turn,omitempty"`
+	ClueNumber             int                 `json:"clue_number,omitempty"`
+	ThresholdApplied       float64             `json:"threshold_applied,omitempty"`
+	ParseError             bool                `json:"parse_error,omitempty"`
+	// CapApplied is true when at least one candidate's confidence was reduced
+	// by its link_type cap (llm.GuessDecisionConfig.LinkTypeCaps) — i.e. the
+	// model reported a higher confidence than its own calibration rule
+	// allows. Lets a batch replay count how often the model is inflating.
+	CapApplied bool `json:"cap_applied,omitempty"`
+	// Correct and ActualWord are filled in once the guess resolves (from the
+	// subsequent GuessGiven event), not at decision time — a guess call
+	// doesn't know its own outcome yet. Correct is a pointer so "unknown yet"
+	// (nil) is distinguishable from "known wrong" (false); it stays nil for a
+	// pass, which has no correctness to report.
+	Correct    *bool  `json:"correct,omitempty"`
+	ActualWord string `json:"actual_word,omitempty"`
+}
+
+// guessCandidateLog is the logged shape of one llm.Candidate.
+type guessCandidateLog struct {
+	Word       string  `json:"word"`
+	Confidence float64 `json:"confidence"`
+	// RawConfidence is the model's reported confidence before any link_type
+	// cap was applied (but after the [0,1] range clamp) — the calibration
+	// signal: compare against Confidence to see how often the model is
+	// inflating relative to its own link_type's cap.
+	RawConfidence float64 `json:"raw_confidence"`
+	Reasoning     string  `json:"reasoning"`
+	LinkType      string  `json:"link_type"`
 }
 
 func (s *Server) logReasoning(e reasoningLogEntry) {
@@ -349,6 +391,15 @@ func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID coden
 		// (round = max of each team's clue count), so reasoning log entries can
 		// be cross-referenced with logs/all_games.csv by game_id+round+team.
 		teamClueCount = map[codenames.Team]int{}
+		// guessesThisTurn and revealedThisTurn track our own team's progress on
+		// the current clue, for the candidate-operative prompt's context and
+		// its bonus-guess threshold. Both reset whenever our team gets a new
+		// clue.
+		guessesThisTurn  int
+		revealedThisTurn []string
+		// pending holds the log entry for our most recent guess, awaiting the
+		// GuessGiven event that reveals whether it was correct.
+		pending *pendingGuess
 	)
 
 	// predictedClueRound returns the round number a new clue from t will get
@@ -405,6 +456,10 @@ func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID coden
 
 			if cg.Team == team {
 				lastClue = cg.Clue
+				// A new clue for our team starts a fresh turn.
+				guessesThisTurn = 0
+				revealedThisTurn = nil
+				pending = nil
 			}
 
 			if role != codenames.OperativeRole || cg.Team != team {
@@ -415,11 +470,12 @@ func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID coden
 
 			round := max(teamClueCount[codenames.RedTeam], teamClueCount[codenames.BlueTeam])
 			rc := reasoningCtx{gameID: gID, backend: backendName, team: team, round: round}
-			guess, err := s.guess(ai, cg.Game.State.Board, cg.Clue, true /* mustGuess */, rc)
+			guess, pg, err := s.guess(ai, cg.Game.State.Board, cg.Clue, true /* mustGuess */, guessesThisTurn, revealedThisTurn, rc)
 			if err != nil {
 				log.Printf("[ERROR] failed to make a guess for clue %+v: %v", cg.Clue, err)
 				return
 			}
+			pending = pg
 
 			if err := c.GiveGuess(gID, guess, true /* confirmed */); err != nil {
 				log.Printf("[ERROR] failed to give guess %q for clue %+v: %v", guess, cg.Clue, err)
@@ -428,6 +484,21 @@ func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID coden
 		},
 		OnGuessGiven: func(gg *msgs.GuessGiven) {
 			activeTeam = gg.Game.State.ActiveTeam
+
+			// This event reports the outcome of our own just-submitted guess
+			// (correct/wrong/pass) — finish and write its pending log entry now
+			// that the result is known. Must happen before the branches below,
+			// since a correct guess also feeds revealedThisTurn for the next one.
+			if gg.Team == team && role == codenames.OperativeRole && pending != nil {
+				s.logOutcome(pending, gg.RevealedCard, toAgent(team))
+				pending = nil
+				if gg.RevealedCard != nil {
+					guessesThisTurn++
+					if gg.RevealedCard.Agent == toAgent(team) {
+						revealedThisTurn = append(revealedThisTurn, gg.RevealedCard.Codename)
+					}
+				}
+			}
 
 			// We only want to formulate a clue when the *other* team has just
 			// finished guessing.
@@ -451,11 +522,12 @@ func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID coden
 			if gg.Team == team && gg.CanKeepGuessing && role == codenames.OperativeRole {
 				round := max(teamClueCount[codenames.RedTeam], teamClueCount[codenames.BlueTeam])
 				rc := reasoningCtx{gameID: gID, backend: backendName, team: team, round: round}
-				guess, err := s.guess(ai, gg.Game.State.Board, lastClue, false /* mustGuess */, rc)
+				guess, pg, err := s.guess(ai, gg.Game.State.Board, lastClue, false /* mustGuess */, guessesThisTurn, revealedThisTurn, rc)
 				if err != nil {
 					log.Printf("[ERROR] failed to make a guess for clue %+v: %v", lastClue, err)
 					return
 				}
+				pending = pg
 
 				if err := c.GiveGuess(gID, guess, true /* confirmed */); err != nil {
 					log.Printf("[ERROR] failed to give guess %q for clue %+v: %v", guess, lastClue, err)
@@ -578,6 +650,13 @@ func toAgent(team codenames.Team) codenames.Agent {
 	}
 }
 
+// candidateOperative is implemented by AI backends that report ranked,
+// confidence-scored candidates and let Go threshold logic decide whether to
+// guess or pass (see llm.GuessWithCandidates).
+type candidateOperative interface {
+	GuessWithCandidates(b *codenames.Board, c *codenames.Clue, mustGuess bool, guessesThisTurn int, revealedHistory []string) (*llm.GuessResult, error)
+}
+
 // passingOperative is implemented by AI backends that can decline to guess
 // (by returning codenames.PassGuess) when passing is allowed.
 type passingOperative interface {
@@ -590,37 +669,88 @@ type reasoningOperative interface {
 	GuessOrPassWithReasoning(b *codenames.Board, c *codenames.Clue, mustGuess bool) (guess string, reasoning string, err error)
 }
 
+// pendingGuess carries the just-decided guess's log entry from guess() to the
+// point where its outcome (correct/wrong/revealed word) becomes known from
+// the subsequent GuessGiven event, since a guess call can't know its own
+// result yet. logOutcome fills in Correct/ActualWord and writes it.
+type pendingGuess struct {
+	entry reasoningLogEntry
+}
+
+// logOutcome finishes and writes the log entry for a previously-decided
+// guess, once its result is known. revealedCard is nil for a pass (no card
+// was revealed) or for a fallback random guess where the caller couldn't
+// determine the card synchronously; ourAgent is this bot's team's agent, used
+// to judge correctness.
+func (s *Server) logOutcome(pg *pendingGuess, revealedCard *codenames.Card, ourAgent codenames.Agent) {
+	if pg == nil {
+		return
+	}
+	if revealedCard != nil {
+		correct := revealedCard.Agent == ourAgent
+		pg.entry.Correct = &correct
+		pg.entry.ActualWord = revealedCard.Codename
+	}
+	s.logReasoning(pg.entry)
+}
+
 // guess asks the AI for a guess. mustGuess is true on the first guess after a
 // clue — Codenames requires at least one guess per clue — and false on
 // follow-up guesses, where the AI may pass. A pass is sent to the web server
-// as an empty guess, which ends the turn.
-func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue, mustGuess bool, rc reasoningCtx) (string, error) {
+// as an empty guess, which ends the turn. guessesThisTurn and revealedHistory
+// are only meaningful to a candidateOperative backend; other backends ignore
+// them. The returned *pendingGuess should be handed to logOutcome once this
+// guess's result is known (see the GuessGiven handler in playGame).
+func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue, mustGuess bool, guessesThisTurn int, revealedHistory []string, rc reasoningCtx) (string, *pendingGuess, error) {
 	start := time.Now()
-	var (
-		guess     string
-		reasoning string
-		err       error
-	)
-	switch v := ai.(type) {
-	case reasoningOperative:
-		guess, reasoning, err = v.GuessOrPassWithReasoning(b, clue, mustGuess)
-	case passingOperative:
-		guess, err = v.GuessOrPass(b, clue, mustGuess)
-	default:
-		guess, err = ai.Guess(b, clue)
+	entry := reasoningLogEntry{
+		GameID:  rc.gameID,
+		Round:   rc.round,
+		Team:    rc.team,
+		Role:    codenames.OperativeRole,
+		Backend: rc.backend,
+		Action:  "guess",
 	}
 
-	s.logReasoning(reasoningLogEntry{
-		GameID:    rc.gameID,
-		Round:     rc.round,
-		Team:      rc.team,
-		Role:      codenames.OperativeRole,
-		Backend:   rc.backend,
-		Action:    "guess",
-		Detail:    guess,
-		Reasoning: reasoning,
-		Error:     errString(err),
-	})
+	var (
+		guess string
+		err   error
+	)
+	switch v := ai.(type) {
+	case candidateOperative:
+		var res *llm.GuessResult
+		res, err = v.GuessWithCandidates(b, clue, mustGuess, guessesThisTurn, revealedHistory)
+		if res != nil {
+			guess = res.Guess
+			entry.Detail = res.Guess
+			entry.RawResponse = res.RawResponse
+			entry.RiskiestBoardWord = res.RiskiestBoardWord
+			entry.TopCandidateIsRiskiest = res.TopCandidateIsRiskiest
+			entry.MustGuess = res.MustGuess
+			entry.GuessesThisTurn = res.GuessesThisTurn
+			entry.ClueNumber = res.ClueNumber
+			entry.ThresholdApplied = res.ThresholdApplied
+			entry.ParseError = res.ParseError
+			entry.CapApplied = res.CapApplied
+			entry.Candidates = make([]guessCandidateLog, len(res.Candidates))
+			for i, c := range res.Candidates {
+				entry.Candidates[i] = guessCandidateLog{Word: c.Word, Confidence: c.Confidence, RawConfidence: c.RawConfidence, Reasoning: c.Reasoning, LinkType: c.LinkType}
+			}
+			entry.Reasoning = renderGuessReasoning(res)
+		}
+	case reasoningOperative:
+		guess, entry.Reasoning, err = v.GuessOrPassWithReasoning(b, clue, mustGuess)
+		entry.Detail = guess
+	case passingOperative:
+		guess, err = v.GuessOrPass(b, clue, mustGuess)
+		entry.Detail = guess
+	default:
+		guess, err = ai.Guess(b, clue)
+		entry.Detail = guess
+	}
+	entry.Error = errString(err)
+
+	pg := &pendingGuess{entry: entry}
 
 	if err != nil || guess == "" {
 		log.Printf("[ERROR] AI failed to make a guess: %v", err)
@@ -629,7 +759,26 @@ func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue, mustGues
 		guess = ""
 	}
 	humanThinkDelay(start, 3*time.Second, 15*time.Second)
-	return guess, err
+	return guess, pg, err
+}
+
+// renderGuessReasoning turns a candidate operative's structured decision into
+// the human-readable text the admin UI's Reasoning column expects.
+func renderGuessReasoning(res *llm.GuessResult) string {
+	if res.ParseError {
+		return "no reasoning available: every attempt failed to produce parseable candidates"
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Threshold: %.2f (mustGuess=%v)\n", res.ThresholdApplied, res.MustGuess)
+	fmt.Fprintf(&sb, "Riskiest board word: %s (top candidate is riskiest: %v)\n\nCandidates:\n", res.RiskiestBoardWord, res.TopCandidateIsRiskiest)
+	for _, c := range res.Candidates {
+		if c.Confidence < c.RawConfidence {
+			fmt.Fprintf(&sb, "- %s (confidence %.2f, capped from %.2f, %s): %s\n", c.Word, c.Confidence, c.RawConfidence, c.LinkType, c.Reasoning)
+		} else {
+			fmt.Fprintf(&sb, "- %s (confidence %.2f, %s): %s\n", c.Word, c.Confidence, c.LinkType, c.Reasoning)
+		}
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 func (s *Server) guessRandomly(b *codenames.Board) (string, error) {

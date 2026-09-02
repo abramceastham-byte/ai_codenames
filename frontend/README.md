@@ -2,14 +2,14 @@
 
 This directory contains the modern Svelte 5 frontend for Codenames. It replaces the legacy Next.js implementation with a lighter, faster, and more reactive Single Page Application (SPA).
 
-## 🚀 Tech Stack
+## Tech Stack
 
 - **Framework**: [SvelteKit](https://kit.svelte.dev/) (SPA mode with `adapter-static`)
 - **State Management**: Svelte 5 Runes (`$state`, `$derived`)
 - **Styling**: [Tailwind CSS v4](https://tailwindcss.com/)
 - **Build Tool**: Vite
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 src/
@@ -75,7 +75,7 @@ We use a global singleton `GameStore` class powered by Svelte 5 Runes. It handle
 - **Operative View**: Sees neutral cards until they are revealed.
 - **Responsive**: Grid adjusts for mobile/desktop.
 
-## 📦 Building for Production
+## Building for Production
 
 Since this is an SPA, it builds to static HTML/JS/CSS assets.
 

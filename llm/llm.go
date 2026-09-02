@@ -10,30 +10,83 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/bcspragu/Codenames/codenames"
 )
 
-// DefaultTimeout bounds a single Ollama call (and the total budget across
-// retries) so a slow model can't make an AI player wait far longer than the
-// human-mimicking delay window applied by the caller.
-const DefaultTimeout = 20 * time.Second
+const DefaultTimeout = 3 * time.Minute
+const DefaultMaxTokens = 3000
+const DefaultGuessMaxTokens = 3000
+const DefaultTemperature = 0.6
 
 // AI implements codenames.Spymaster and codenames.Operative using a local
 // Ollama model.
 type AI struct {
-	endpoint string // e.g. "http://localhost:11434"
-	model    string // e.g. "llama3"
-	timeout  time.Duration
+	endpoint    string // e.g. "http://localhost:11434"
+	model       string // e.g. "llama3"
+	timeout     time.Duration
+	maxTokens   int
+	temperature float64
+	seed *int
+	think *bool
+	guessConfig GuessDecisionConfig
+	parseErrorCount atomic.Int64
+	unknownLinkTypeCount atomic.Int64
 }
 
-func New(endpoint, model string, timeout time.Duration) *AI {
+// Option customizes an AI beyond the required New arguments.
+type Option func(*AI)
+
+// WithTemperature overrides DefaultTemperature.
+func WithTemperature(temperature float64) Option {
+	return func(ai *AI) { ai.temperature = temperature }
+}
+
+// WithSeed fixes Ollama's sampling seed so identical prompts yield identical replies across runs.
+func WithSeed(seed int) Option {
+	return func(ai *AI) { ai.seed = &seed }
+}
+
+func WithThink(think bool) Option {
+	return func(ai *AI) { ai.think = &think }
+}
+
+func WithGuessDecisionConfig(cfg GuessDecisionConfig) Option {
+	return func(ai *AI) { ai.guessConfig = cfg }
+}
+
+func (ai *AI) deliberationInstructions() string {
+	if ai.think != nil && !*ai.think {
+		return `Thinking is disabled for this call, so you have no private scratch space — anything you write is your final answer. Do NOT narrate your deliberation, list candidates, or explain your reasoning in prose. Weigh your candidates against the assassin/opponent words/bystanders silently, commit to one, and reply with ONLY the schema below — nothing before it, nothing after it.`
+	}
+	return `Inside your thinking, weigh your candidates against the assassin/opponent words/bystanders as you go, and commit to a verdict immediately — once you've ruled a candidate out as unsafe or weak, never come back to reconsider it. Keep your thinking short and decisive; looping back over candidates you've already rejected is the main way you run out of budget. If you notice yourself still undecided, immediately stop deliberating and fall back to your single safest, highest-confidence one-target candidate — a safe 1-word clue that ships beats an ambitious one that times out.
+
+After you're done thinking, output nothing but the schema below, in this exact order — no summary, no repetition of your thinking outside it:`
+}
+
+func (ai *AI) guessFormatInstructions() string {
+	if ai.think != nil && !*ai.think {
+		return `Thinking is disabled for this call, so you have no private scratch space — anything you write is your final answer. Do NOT narrate your reasoning, list your deliberation, or explain yourself outside the JSON object. Put each candidate's one-sentence reasoning in that candidate's "reasoning" field and nowhere else.`
+	}
+	return `Do your reasoning inside your thinking. Once you're done thinking, output nothing but the JSON object below — no summary, no explanation, no repetition of your thinking outside it.`
+}
+
+func New(endpoint, model string, timeout time.Duration, maxTokens int, opts ...Option) *AI {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
-	return &AI{endpoint: endpoint, model: model, timeout: timeout}
+	if maxTokens <= 0 {
+		maxTokens = DefaultMaxTokens
+	}
+	ai := &AI{endpoint: endpoint, model: model, timeout: timeout, maxTokens: maxTokens, temperature: DefaultTemperature, guessConfig: DefaultGuessDecisionConfig}
+	for _, opt := range opts {
+		opt(ai)
+	}
+	return ai
 }
 
 // Ollama chat API types
@@ -42,10 +95,16 @@ type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
 	Stream   bool          `json:"stream"`
-	// Format, when set to "json", makes Ollama constrain decoding to valid
-	// JSON. It doesn't enforce our schema, but it removes the whole class of
-	// "model wrapped the object in prose" parse failures.
 	Format string `json:"format,omitempty"`
+	KeepAlive string `json:"keep_alive,omitempty"`
+	Think *bool `json:"think,omitempty"`
+	Options chatReqOptions `json:"options"`
+}
+
+type chatReqOptions struct {
+	NumPredict  int     `json:"num_predict,omitempty"`
+	Temperature float64 `json:"temperature"`
+	Seed        *int    `json:"seed,omitempty"`
 }
 
 type chatMessage struct {
@@ -54,44 +113,81 @@ type chatMessage struct {
 }
 
 type chatResponse struct {
-	Message chatMessage `json:"message"`
+	Message         chatMessage `json:"message"`
+	TotalDuration   int64       `json:"total_duration"`
+	PromptEvalCount int         `json:"prompt_eval_count"`
+	EvalCount       int         `json:"eval_count"`
 }
 
-// chat sends a conversation to Ollama. format is passed through to the API;
-// pass "json" to constrain the reply to a JSON value, or "" for free text.
-func (ai *AI) chat(ctx context.Context, messages []chatMessage, format string) (string, error) {
+func (ai *AI) chat(ctx context.Context, messages []chatMessage, format string, numPredict int) (string, chatResponse, error) {
 	body, err := json.Marshal(chatRequest{
-		Model:    ai.model,
-		Messages: messages,
-		Stream:   false,
-		Format:   format,
+		Model:     ai.model,
+		Messages:  messages,
+		Stream:    false,
+		Format:    format,
+		KeepAlive: "10m",
+		Think:     ai.think,
+		Options:   chatReqOptions{NumPredict: numPredict, Temperature: ai.temperature, Seed: ai.seed},
 	})
 	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+		return "", chatResponse{}, fmt.Errorf("marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ai.endpoint+"/api/chat", bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("build request: %w", err)
+		return "", chatResponse{}, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("ollama request: %w", err)
+		return "", chatResponse{}, fmt.Errorf("ollama request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("ollama returned status %d", resp.StatusCode)
+		return "", chatResponse{}, fmt.Errorf("ollama returned status %d", resp.StatusCode)
 	}
 
 	var cr chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&cr); err != nil {
-		return "", fmt.Errorf("decode response: %w", err)
+		return "", chatResponse{}, fmt.Errorf("decode response: %w", err)
 	}
 
-	return strings.TrimSpace(cr.Message.Content), nil
+	return strings.TrimSpace(cr.Message.Content), cr, nil
+}
+
+const thinkOpenTag, thinkCloseTag = "<think>", "</think>"
+
+func splitThinking(reply string) (clean, thinking string) {
+	start := strings.Index(reply, thinkOpenTag)
+	if start < 0 {
+		if end := strings.Index(reply, thinkCloseTag); end >= 0 {
+			return strings.TrimSpace(reply[end+len(thinkCloseTag):]), strings.TrimSpace(reply[:end])
+		}
+		return reply, ""
+	}
+	contentStart := start + len(thinkOpenTag)
+	end := strings.Index(reply[contentStart:], thinkCloseTag)
+	if end < 0 {
+		return "", strings.TrimSpace(reply[contentStart:])
+	}
+	end += contentStart
+	clean = strings.TrimSpace(reply[:start] + reply[end+len(thinkCloseTag):])
+	thinking = strings.TrimSpace(reply[contentStart:end])
+	return clean, thinking
+}
+
+// withThinking prepends a model's raw chain-of-thought to the reasoning
+// summary derived from its final answer, so both reach the reasoning log.
+func withThinking(thinking, reasoning string) string {
+	if thinking == "" {
+		return reasoning
+	}
+	if reasoning != "" {
+		reasoning = "\n\nDecision: " + reasoning
+	}
+	return "Thinking: " + thinking + reasoning
 }
 
 // GiveClue implements codenames.Spymaster.
@@ -134,33 +230,37 @@ func (ai *AI) giveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Cl
 		}
 	}
 
-	system := `You are a skilled human playing as a Codenames spymaster. You give a single-word clue and name exactly which of your team's words that clue points to. Give clues the way a person would, not like a search engine.
+	system := fmt.Sprintf(`You are a skilled human playing as a Codenames spymaster. You give a single-word clue and name exactly which of your team's words that clue points to. Give clues the way a person would, not like a search engine.
 
 Rules:
 - Your clue must be a SINGLE word (no spaces, no hyphens, no proper nouns).
-- Your clue can NEVER be a word that appears anywhere on the board, in any form. If "king" is on the board, then "king", "kings" and "kingdom" are all rejected — say "monarch" instead. This applies to every word listed below, including your own team's words: naming a board word as the clue is an illegal move, not a shortcut.
+- Your clue can NEVER be a word that appears anywhere on the board, in any form, including as a substring. If "king" is on the board, then "king", "kings" and "kingdom" are all rejected — say "monarch" instead. If "ship" is on the board, then "shipping" and "worship" are rejected too, even though "ship" isn't a prefix in "worship" — say "vessel" or "devoted" instead. This applies to every word listed below, including your own team's words: naming a board word as the clue is an illegal move, not a shortcut.
 - You MUST avoid clues that relate to the assassin word — guessing it loses the game instantly.
 - You should avoid clues that relate to opponent words or bystanders.
-- Every word you list in "targets" must be one of YOUR team's words, spelled exactly as given.
-- Prefer 2 or 3 targets. Only list 4 or more if the connection is so natural that a person would spot it instantly.
+- Every word you list as a target must be one of YOUR team's words, spelled exactly as given.
+- 2 targets is a completely good, sufficient clue — it is not a lesser result. Only add a 3rd word if its link to the clue is just as strong as the other two. Never pad a 2-word clue with a weaker 3rd word merely to raise the count; a strong 2-word clue beats a padded 3-word one every time.
 - Choose clues that feel intuitive and slightly creative, not just the most statistically obvious connection. Connecting words in an indirect or cultural way — the way a person would think of them — is good.
 - Weigh the score. If your team has notably more words left than the opponent, play it safe — a smaller, high-confidence clue that guarantees progress beats a big swing you might blow. If you're notably behind, it's worth the extra risk: a clue targeting more words at once, even if less certain, gives you a chance to catch up that a safe 1-word clue doesn't.
 
-Before finalizing your clue, explicitly ask yourself:
-- Is this clue associated with the assassin word in meaning, sound, or category? If an operative might connect it to the assassin, discard it and choose a different clue.
-- Could any of my target words be mistaken for the opponent's words?
-- Is there any bystander or assassin word that shares my clue?
-- If yes, drop the risky word from targets or choose a safer clue.
+%s
 
-Only list a word in "targets" if you are highly confident an operative will reach it from your clue. Uncertainty means listing fewer words, never listing a word you are hoping about.
+ASSASSIN: <clear, or the risk this clue runs toward the assassin word>
+CLUE: <your one-word clue>
+TARGETS: <comma-separated board words this clue covers>
+NUMBER: <the count of words listed in TARGETS>
 
-Respond with ONLY a JSON object, no other text, in exactly this shape:
-{"clue": "<your one-word clue>", "targets": ["<board word>", ...], "links": {"<board word>": "<why the clue points to this specific word>", ...}}
+ASSASSIN: must never be empty — state plainly whether the clue is clear of the assassin word or explain the risk it runs.
 
-"links" must contain one entry for every word in "targets" — the same words, no more and no fewer — and each value must be a concrete reason that word specifically is reached from the clue. A reply whose "links" keys do not exactly match "targets" is rejected.
+Only list a word in TARGETS if you are highly confident an operative will reach it from your clue. Uncertainty means listing fewer words, never listing a word you are hoping about.
 
 Example:
-{"clue": "ocean", "targets": ["whale", "ship"], "links": {"whale": "whales are the largest ocean animals", "ship": "ships cross the ocean"}}`
+ASSASSIN: clear, no relation to "shadow"
+
+CLUE: ocean
+TARGETS: whale, ship
+NUMBER: 2
+
+`, ai.deliberationInstructions())
 
 	prompt := fmt.Sprintf(`You are the %s team spymaster.
 
@@ -189,8 +289,13 @@ Give your clue:`, teamName,
 	defer cancel()
 
 	var lastErr error
+	// Grows on a truncated-thinking retry (see below) so a model that ran out
+	// of budget mid-thought gets more room next time instead of hitting the
+	// same ceiling again.
+	numPredict := ai.maxTokens
 	for attempt := range 3 {
-		reply, err := ai.chat(ctx, messages, "json")
+		
+		raw, cr, err := ai.chat(ctx, messages, "", numPredict)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) && lastErr != nil {
 				// We had a real reply earlier and merely ran out of time
@@ -200,12 +305,27 @@ Give your clue:`, teamName,
 			return nil, "", fmt.Errorf("llm chat: %w", err)
 		}
 
-		log.Printf("[LLM Spymaster] attempt=%d, raw response: %q", attempt+1, reply)
+		
+		log.Printf("[LLM Spymaster] attempt=%d, raw response: %q", attempt+1, raw)
+		reply, thinking := splitThinking(raw)
+		log.Printf("[LLM Spymaster] attempt=%d, eval_count=%d prompt_eval_count=%d total_duration=%s, thinking_chars=%d reply_chars=%d",
+			attempt+1, cr.EvalCount, cr.PromptEvalCount, time.Duration(cr.TotalDuration), len(thinking), len(reply))
+
+		if reply == "" && thinking != "" {
+			
+			numPredict = min(numPredict*2, 4*DefaultMaxTokens)
+			lastErr = fmt.Errorf("model exhausted its %d-token budget before finishing its <think> block", numPredict/2)
+			log.Printf("[LLM Spymaster] rejected attempt=%d: %v; retrying with numPredict=%d", attempt+1, lastErr, numPredict)
+			messages = append(messages,
+				chatMessage{Role: "user", Content: "Your previous reply ran out of budget before you reached an answer. Be more concise in your reasoning and make sure you output the final ASSASSIN/CLUE/TARGETS/NUMBER schema."},
+			)
+			continue
+		}
 
 		clue, reasoning, err := parseClueResponse(reply, myWords, b.Cards)
 		if err == nil {
 			log.Printf("[LLM Spymaster] clue: %s %d (targets: %s)", clue.Word, clue.Count, reasoning)
-			return clue, reasoning, nil
+			return clue, withThinking(thinking, reasoning), nil
 		}
 
 		lastErr = err
@@ -215,7 +335,7 @@ Give your clue:`, teamName,
 		// rather than a re-roll of the same mistake.
 		messages = append(messages,
 			chatMessage{Role: "assistant", Content: reply},
-			chatMessage{Role: "user", Content: fmt.Sprintf("That reply was rejected: %v. Respond again with ONLY the JSON object, listing one \"links\" entry for each word in \"targets\". Your team's words are: %s", err, strings.Join(myWords, ", "))},
+			chatMessage{Role: "user", Content: fmt.Sprintf("That reply was rejected: %v. Respond again following the exact schema: ASSASSIN, then CLUE/TARGETS/NUMBER lines where NUMBER matches the count of words in TARGETS. Your team's words are: %s", err, strings.Join(myWords, ", "))},
 		)
 	}
 
@@ -234,37 +354,30 @@ func extractReason(reply string) string {
 	return ""
 }
 
-// clueReply is the schema the spymaster model must produce. Note the absence
-// of any count field: the model names the words it means, and the count is
-// derived from that list, so a clue can never claim a number that disagrees
-// with the words behind it.
-type clueReply struct {
-	Clue    string            `json:"clue"`
-	Targets []string          `json:"targets"`
-	Links   map[string]string `json:"links"`
+// labeledLine returns the trimmed text following "<label>:" on the first
+// line of reply that starts with that label (case-insensitive), or "" if no
+// such line exists.
+func labeledLine(reply, label string) string {
+	prefix := strings.ToUpper(label) + ":"
+	for _, line := range strings.Split(reply, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToUpper(line), prefix) {
+			return strings.TrimSpace(line[len(prefix):])
+		}
+	}
+	return ""
 }
 
-// parseClueResponse validates the model's JSON reply against myWords and
-// derives the clue count from len(targets). It returns the clue and a
-// human-readable rendering of the per-word justifications.
-//
-// Every failure here is a hard reject — we never repair a malformed reply into
-// a playable clue, because a repaired clue is one whose count no longer
-// reflects words the model actually committed to.
+
 func parseClueResponse(reply string, myWords []string, board []codenames.Card) (*codenames.Clue, string, error) {
-	raw, err := extractJSONObject(reply)
-	if err != nil {
-		return nil, "", err
+	assassinLine := strings.TrimSpace(labeledLine(reply, "ASSASSIN"))
+	if assassinLine == "" {
+		return nil, "", errors.New("reply had no ASSASSIN: line, or it was empty")
 	}
 
-	var cr clueReply
-	if err := json.Unmarshal([]byte(raw), &cr); err != nil {
-		return nil, "", fmt.Errorf("reply was not a valid JSON object: %w", err)
-	}
-
-	word := strings.ToLower(strings.TrimSpace(cr.Clue))
+	word := strings.ToLower(strings.TrimSpace(labeledLine(reply, "CLUE")))
 	if word == "" {
-		return nil, "", errors.New(`"clue" was empty`)
+		return nil, "", errors.New("CLUE: was empty")
 	}
 	if strings.ContainsAny(word, " \t-_") {
 		return nil, "", fmt.Errorf("clue %q must be a single word", word)
@@ -273,22 +386,32 @@ func parseClueResponse(reply string, myWords []string, board []codenames.Card) (
 		return nil, "", fmt.Errorf("clue %q is or contains the board word %q; clues may never be words on the board", word, conflict)
 	}
 
-	if len(cr.Targets) == 0 {
-		return nil, "", errors.New(`"targets" was empty; list the words your clue points to`)
+	targetsLine := labeledLine(reply, "TARGETS")
+	if targetsLine == "" {
+		return nil, "", errors.New("TARGETS: was empty; list the words your clue points to")
+	}
+	rawTargets := strings.Split(targetsLine, ",")
+
+	numberLine := labeledLine(reply, "NUMBER")
+	number, err := strconv.Atoi(strings.TrimSpace(numberLine))
+	if err != nil {
+		return nil, "", fmt.Errorf("NUMBER: %q was not an integer", numberLine)
 	}
 
 	// Canonicalize each target to the board's own spelling, rejecting anything
-	// that isn't one of this team's unrevealed words. Without this the derived
-	// count could include a word the team doesn't even own.
+	// that isn't one of this team's unrevealed words.
 	byLower := make(map[string]string, len(myWords))
 	for _, w := range myWords {
 		byLower[strings.ToLower(strings.TrimSpace(w))] = w
 	}
 
-	targets := make([]string, 0, len(cr.Targets))
-	seen := make(map[string]bool, len(cr.Targets))
-	for _, t := range cr.Targets {
+	targets := make([]string, 0, len(rawTargets))
+	seen := make(map[string]bool, len(rawTargets))
+	for _, t := range rawTargets {
 		key := strings.ToLower(strings.TrimSpace(t))
+		if key == "" {
+			continue
+		}
 		canonical, ok := byLower[key]
 		if !ok {
 			return nil, "", fmt.Errorf("target %q is not one of your team's words", t)
@@ -299,67 +422,127 @@ func parseClueResponse(reply string, myWords []string, board []codenames.Card) (
 		seen[key] = true
 		targets = append(targets, canonical)
 	}
-
-	// The hard reject: links must cover targets exactly. One justification per
-	// word, no spares — a model that can't name why a word is reached doesn't
-	// get to count it.
-	if len(cr.Links) != len(targets) {
-		return nil, "", fmt.Errorf("got %d \"links\" entries for %d targets; provide exactly one per target", len(cr.Links), len(targets))
-	}
-	links := make(map[string]string, len(cr.Links))
-	for k, v := range cr.Links {
-		key := strings.ToLower(strings.TrimSpace(k))
-		if !seen[key] {
-			return nil, "", fmt.Errorf("\"links\" has an entry for %q, which is not in \"targets\"", k)
-		}
-		if strings.TrimSpace(v) == "" {
-			return nil, "", fmt.Errorf("\"links\" entry for %q was empty; say why the clue points there", k)
-		}
-		links[key] = strings.TrimSpace(v)
+	if len(targets) == 0 {
+		return nil, "", errors.New("TARGETS: was empty; list the words your clue points to")
 	}
 
-	// len(links) == len(targets) and every key is a distinct target, so the
-	// two sets are now equal.
-
-	parts := make([]string, 0, len(targets))
-	for _, t := range targets {
-		parts = append(parts, fmt.Sprintf("%s: %s", t, links[strings.ToLower(t)]))
+	// NUMBER must agree with the words actually listed in TARGETS — this
+	// catches a model that miscounts rather than silently trusting either
+	// value on its own.
+	if number != len(targets) {
+		return nil, "", fmt.Errorf("NUMBER: %d does not match the %d word(s) listed in TARGETS", number, len(targets))
 	}
 
-	return &codenames.Clue{Word: word, Count: len(targets)}, strings.Join(parts, "; "), nil
+	reasoning := fmt.Sprintf("Assassin check: %s\n\nTargets: %s",
+		assassinLine, strings.Join(targets, ", "))
+
+	return &codenames.Clue{Word: word, Count: len(targets)}, reasoning, nil
 }
 
-// extractJSONObject pulls the outermost {...} out of a reply. Ollama's JSON
-// mode makes this nearly always a no-op, but models still occasionally fence
-// the object in ```json blocks.
-func extractJSONObject(reply string) (string, error) {
-	start := strings.IndexByte(reply, '{')
-	end := strings.LastIndexByte(reply, '}')
-	if start < 0 || end <= start {
-		return "", errors.New("reply contained no JSON object")
-	}
-	return reply[start : end+1], nil
+
+type GuessDecisionConfig struct {
+	MandatedThreshold float64
+	BonusThreshold float64
+	RiskiestWordPenalty float64
+	LinkTypeCaps map[string]float64
+	UnknownLinkTypeCap float64
+}
+
+var DefaultGuessDecisionConfig = GuessDecisionConfig{
+	MandatedThreshold:   0.55,
+	BonusThreshold:      0.65,
+	RiskiestWordPenalty: 0.15,
+	LinkTypeCaps: map[string]float64{
+		"direct":    1.00,
+		"category":  0.75,
+		"idiom":     0.35,
+		"multi_hop": 0.40,
+	},
+	UnknownLinkTypeCap: 0.35,
+}
+
+// Candidate is one board word the operative considered, with its calibrated
+// confidence that the clue is pointing at it.
+type Candidate struct {
+	Word       string  `json:"word"`
+	Confidence float64 `json:"confidence"`
+	Reasoning  string  `json:"reasoning"`
+	LinkType   string  `json:"link_type"`
+	RawConfidence float64 `json:"-"`
+}
+
+type CandidateResponse struct {
+	Candidates             []Candidate `json:"candidates"`
+	RiskiestBoardWord      string      `json:"riskiest_board_word"`
+	TopCandidateIsRiskiest bool        `json:"top_candidate_is_riskiest"`
+}
+
+type GuessResult struct {
+	
+	Guess       string
+	RawResponse string
+	Candidates  []Candidate
+	RiskiestBoardWord      string
+	TopCandidateIsRiskiest bool
+	ThresholdApplied float64
+	MustGuess        bool
+	GuessesThisTurn  int
+	ClueNumber       int
+	ParseError bool
+	CapApplied bool
 }
 
 // Guess implements codenames.Operative.
 func (ai *AI) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
-	return ai.GuessOrPass(b, c, true /* mustGuess */)
+	res, err := ai.GuessWithCandidates(b, c, true /* mustGuess */, 0, nil)
+	if err != nil {
+		return "", err
+	}
+	return res.Guess, nil
 }
 
 // GuessOrPass is like Guess, but when mustGuess is false it may return
 // codenames.PassGuess to end the turn instead of risking a bad guess.
 func (ai *AI) GuessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, error) {
-	guess, _, err := ai.guessOrPass(b, c, mustGuess)
-	return guess, err
+	res, err := ai.GuessWithCandidates(b, c, mustGuess, 0, nil)
+	if err != nil {
+		return "", err
+	}
+	return res.Guess, nil
 }
 
 // GuessOrPassWithReasoning is like GuessOrPass, but also returns a
-// human-readable explanation of why the guess (or pass) was chosen.
+// human-readable rendering of the candidates considered.
 func (ai *AI) GuessOrPassWithReasoning(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, string, error) {
-	return ai.guessOrPass(b, c, mustGuess)
+	res, err := ai.GuessWithCandidates(b, c, mustGuess, 0, nil)
+	if err != nil {
+		return "", "", err
+	}
+	return res.Guess, renderCandidateReasoning(res), nil
 }
 
-func (ai *AI) guessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, string, error) {
+// renderCandidateReasoning turns a GuessResult's structured candidates into
+// the human-readable reasoning string the admin UI / reasoning log expects,
+// mirroring the "Assassin check: ...\n\nTargets: ..." style used for clues.
+func renderCandidateReasoning(res *GuessResult) string {
+	if res.ParseError {
+		return "no reasoning available: every attempt failed to produce parseable candidates"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Threshold: %.2f (mustGuess=%v)\n", res.ThresholdApplied, res.MustGuess)
+	fmt.Fprintf(&b, "Riskiest board word: %s (top candidate is riskiest: %v)\n\nCandidates:\n", res.RiskiestBoardWord, res.TopCandidateIsRiskiest)
+	for _, c := range res.Candidates {
+		if c.Confidence < c.RawConfidence {
+			fmt.Fprintf(&b, "- %s (confidence %.2f, capped from %.2f, %s): %s\n", c.Word, c.Confidence, c.RawConfidence, c.LinkType, c.Reasoning)
+		} else {
+			fmt.Fprintf(&b, "- %s (confidence %.2f, %s): %s\n", c.Word, c.Confidence, c.LinkType, c.Reasoning)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// GuessWithCandidates asks the operative for ranked, confidence-scored candidates 
+func (ai *AI) GuessWithCandidates(b *codenames.Board, c *codenames.Clue, mustGuess bool, guessesThisTurn int, revealedHistory []string) (*GuessResult, error) {
 	var unrevealed []string
 	for _, card := range b.Cards {
 		if !card.Revealed {
@@ -367,25 +550,49 @@ func (ai *AI) guessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool)
 		}
 	}
 
-	system := `You are a human playing as a Codenames operative. Given a one-word clue and a count from your spymaster, you must guess which word on the board the clue refers to.
+	system := fmt.Sprintf(`You are the operative (guesser) in a game of Codenames.
 
-Rules:
-- You must pick exactly ONE word from the board.
-- Think about what the spymaster was *intending* with the clue, not just raw word similarity.
-- Prioritize the most obvious, intuitive connection — the one a person would see first.
-- If several words seem to fit, pick the safest, most direct one.
-- Respond with EXACTLY two lines: the single board word on the first line, then "REASON: <one short sentence>" on the second line explaining your choice. No other text.`
+Your job is NOT to pick a word. Your job is to report what you actually believe, with honest confidence. A separate system decides whether to guess or pass.
 
-	if !mustGuess {
-		system += `
-- You have already made at least one guess for this clue. If none of the remaining words connect well to the clue, or every candidate feels too risky, respond with PASS on the first line (followed by a REASON line) to stop guessing and end your turn.`
+Return the 3 strongest candidates, ranked. For each, classify how the clue connects to it, and give your own honest confidence (0.0 = no real basis, 1.0 = certain) for how sure you are the clue means that word:
+
+  direct     A direct synonym, category member, or definitional link.
+  category   A real but broader kind-of/type-of relationship — not a synonym, but a genuine category link.
+  idiom      The link only exists through a specific fixed phrase, pun, or figure of speech.
+  multi_hop  The link only holds after two or more separate associative steps.
+
+Calibration rules:
+- Do not inflate. If a turn has no strong candidate, the correct output is three low-confidence candidates. That is a valid and useful answer.
+- An idiom or multi_hop link is inherently less reliable than a direct or category link. Your confidence should reflect that difference honestly — don't treat a clever idiom as a near-certainty just because it's the best thing you found.
+- Confidence should vary from candidate to candidate based on how sure you actually are about each one specifically. Don't give multiple candidates the same confidence just because they share a link type.
+- If several candidates are genuinely comparable, giving them similar, middling confidence is a legitimate answer — that's honest reporting, not indecision.
+
+Then, separately: look at every unrevealed word on the board and name the single one you would most expect the spymaster to be avoiding, given how dangerous a wrong hit would be. State whether any of your three candidates is that word.
+
+%s
+
+Respond with a single JSON object and nothing else — no prose before it, no commentary after it, no markdown fences:
+
+{
+  "candidates": [
+    {"word": "...", "confidence": 0.0, "reasoning": "one sentence", "link_type": "direct|category|idiom|multi_hop"}
+  ],
+  "riskiest_board_word": "...",
+  "top_candidate_is_riskiest": true|false
+}`, ai.guessFormatInstructions())
+
+	revealedStr := "(none yet)"
+	if len(revealedHistory) > 0 {
+		revealedStr = strings.Join(revealedHistory, ", ")
 	}
+	prompt := fmt.Sprintf(`BOARD (unrevealed words):
+%s
 
-	prompt := fmt.Sprintf(`The clue is: %s %d
+REVEALED SO FAR:
+%s
 
-Words on the board: %s
-
-Your guess:`, c.Word, c.Count, strings.Join(unrevealed, ", "))
+CLUE: %s %d
+GUESSES ALREADY MADE THIS TURN: %d`, strings.Join(unrevealed, ", "), revealedStr, c.Word, c.Count, guessesThisTurn)
 
 	messages := []chatMessage{
 		{Role: "system", Content: system},
@@ -393,91 +600,234 @@ Your guess:`, c.Word, c.Count, strings.Join(unrevealed, ", "))
 	}
 
 	// All retries share one timeout budget, so a slow model can't multiply
-	// the wait by re-trying — worst case is still one bounded wait, after
-	// which we fall back to a random legal guess. Guesses get a tighter
-	// budget than clues so they comfortably fit under the shorter
-	// human-think delay ceiling applied to guesses (see humanThinkDelay in
-	// cmd/ai-server/server.go).
-	guessBudget := min(ai.timeout, 12*time.Second)
+	// the wait by re-trying — after this, we fall back to a random legal
+	// guess. Capped tighter than the clue budget, but note this (like
+	// DefaultTimeout above) no longer fits under humanThinkDelay's ~15s
+	// guess window in cmd/ai-server/server.go once a reasoning model uses
+	// its full budget.
+	guessBudget := min(ai.timeout, 90*time.Second)
 	ctx, cancel := context.WithTimeout(context.Background(), guessBudget)
 	defer cancel()
 
-	// Try up to 3 times to get a valid board word.
+	// Starts well below ai.maxTokens (see DefaultGuessMaxTokens) so an
+	// unproductive, narrating attempt fails and retries faster instead of
+	// burning a full clue-sized budget on prose. Grows on a truncated-thinking
+	// retry (see below), same as giveClue, so a model that runs out of budget
+	// mid-<think> gets more room instead of silently falling back to a random
+	// guess.
+	numPredict := DefaultGuessMaxTokens
+
+	base := &GuessResult{MustGuess: mustGuess, GuessesThisTurn: guessesThisTurn, ClueNumber: c.Count}
+
+	// Try up to 3 times to get parseable candidates.
 	for attempt := range 3 {
-		reply, err := ai.chat(ctx, messages, "")
+		raw, cr, err := ai.chat(ctx, messages, "", numPredict)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				log.Printf("[LLM Operative] clue=%q timed out after attempt=%d, falling back", c.Word, attempt+1)
-				return "", "", nil
+				base.ParseError = true
+				return base, nil
 			}
-			return "", "", fmt.Errorf("llm chat: %w", err)
+			return nil, fmt.Errorf("llm chat: %w", err)
 		}
 
-		log.Printf("[LLM Operative] clue=%q, attempt=%d, raw response: %q", c.Word, attempt+1, reply)
+		// See the matching comment in giveClue: logged pre-split so this
+		// stays a true raw response for merge_reasoning_data.py.
+		log.Printf("[LLM Operative] clue=%q, attempt=%d, raw response: %q", c.Word, attempt+1, raw)
+		reply, thinking := splitThinking(raw)
+		log.Printf("[LLM Operative] clue=%q, attempt=%d, eval_count=%d prompt_eval_count=%d total_duration=%s, thinking_chars=%d reply_chars=%d",
+			c.Word, attempt+1, cr.EvalCount, cr.PromptEvalCount, time.Duration(cr.TotalDuration), len(thinking), len(reply))
 
-		guess := parseGuessResponse(reply, unrevealed)
-		if guess != "" {
-			reasoning := extractReason(reply)
-			log.Printf("[LLM Operative] guess: %q (reason: %s)", guess, reasoning)
-			return guess, reasoning, nil
+		if reply == "" && thinking != "" {
+			
+			numPredict = min(numPredict*2, 4*DefaultMaxTokens)
+			log.Printf("[LLM Operative] clue=%q attempt=%d exhausted its token budget before finishing its <think> block; retrying with numPredict=%d", c.Word, attempt+1, numPredict)
+			messages = append(messages,
+				chatMessage{Role: "user", Content: "Your previous reply ran out of budget before you reached an answer. Be more concise and make sure you output the JSON candidates object."},
+			)
+			continue
 		}
 
-		if !mustGuess && isPassResponse(reply) {
-			reasoning := extractReason(reply)
-			log.Printf("[LLM Operative] passing on clue %q (reason: %s)", c.Word, reasoning)
-			return codenames.PassGuess, reasoning, nil
+		resp, parseErr := parseCandidateResponse(reply, unrevealed)
+		if parseErr != nil {
+			log.Printf("[LLM Operative] clue=%q attempt=%d rejected: %v", c.Word, attempt+1, parseErr)
+			messages = append(messages,
+				chatMessage{Role: "assistant", Content: reply},
+				chatMessage{Role: "user", Content: fmt.Sprintf("That reply was rejected: %v. Respond again with ONLY the JSON candidates object, using words exactly as they appear on the board: %s", parseErr, strings.Join(unrevealed, ", "))},
+			)
+			continue
 		}
 
-		// Ask the model to try again with the board words emphasized.
-		messages = append(messages,
-			chatMessage{Role: "assistant", Content: reply},
-			chatMessage{Role: "user", Content: fmt.Sprintf("That word is not on the board. You MUST pick from: %s", strings.Join(unrevealed, ", "))},
-		)
+	
+		capApplied, unknownLinkTypes := applyLinkTypeCaps(ai.guessConfig, resp.Candidates)
+		if unknownLinkTypes > 0 {
+			ai.unknownLinkTypeCount.Add(int64(unknownLinkTypes))
+		}
+
+		top := topCandidate(resp.Candidates)
+		base.RawResponse = raw
+		base.Candidates = resp.Candidates
+		base.RiskiestBoardWord = resp.RiskiestBoardWord
+		base.TopCandidateIsRiskiest = resp.TopCandidateIsRiskiest
+		base.CapApplied = capApplied
+		base.Guess, base.ThresholdApplied = decideGuess(ai.guessConfig, mustGuess, guessesThisTurn, c.Count, top, resp.TopCandidateIsRiskiest)
+
+		log.Printf("[LLM Operative] clue=%q decision=%q top=%q raw_confidence=%.2f confidence=%.2f link_type=%q cap_applied=%v threshold=%.2f",
+			c.Word, base.Guess, top.Word, top.RawConfidence, top.Confidence, top.LinkType, capApplied, base.ThresholdApplied)
+		return base, nil
 	}
 
-	// All retries failed — return empty to trigger random guess fallback.
-	log.Printf("[LLM Operative] all retries failed for clue %q, falling back", c.Word)
-	return "", "", nil
+
+	ai.parseErrorCount.Add(1)
+	log.Printf("[LLM Operative] all retries failed to parse candidates for clue %q, falling back (parse_error_count=%d)", c.Word, ai.parseErrorCount.Load())
+	base.ParseError = true
+	return base, nil
 }
 
-// isPassResponse reports whether the LLM's reply is a pass. Board-word
-// matches are checked first by the caller, so a board word named "pass" still
-// resolves to a guess.
-func isPassResponse(reply string) bool {
-	firstLine := strings.Split(strings.TrimSpace(reply), "\n")[0]
-	firstLine = strings.Trim(strings.TrimSpace(firstLine), `*."'`)
-	return strings.EqualFold(firstLine, "pass")
+func (ai *AI) ParseErrorCount() int64 {
+	return ai.parseErrorCount.Load()
 }
 
-// parseGuessResponse finds the best matching board word from the LLM's response.
-func parseGuessResponse(reply string, boardWords []string) string {
-	reply = strings.TrimSpace(reply)
+func (ai *AI) UnknownLinkTypeCount() int64 {
+	return ai.unknownLinkTypeCount.Load()
+}
 
-	// First, try exact match (case-insensitive) against board words.
-	for _, w := range boardWords {
-		if strings.EqualFold(reply, w) {
-			return w
+func applyLinkTypeCaps(cfg GuessDecisionConfig, candidates []Candidate) (capApplied bool, unknownLinkTypes int) {
+	for i := range candidates {
+		c := &candidates[i]
+		limit, ok := cfg.LinkTypeCaps[strings.ToLower(strings.TrimSpace(c.LinkType))]
+		if !ok {
+			limit = cfg.UnknownLinkTypeCap
+			unknownLinkTypes++
+		}
+		if c.Confidence > limit {
+			c.Confidence = limit
+			capApplied = true
+		}
+	}
+	return capApplied, unknownLinkTypes
+}
+
+func topCandidate(candidates []Candidate) Candidate {
+	top := candidates[0]
+	for _, c := range candidates[1:] {
+		if c.Confidence > top.Confidence {
+			top = c
+		}
+	}
+	return top
+}
+
+func decideGuess(cfg GuessDecisionConfig, mustGuess bool, guessesThisTurn, clueNumber int, top Candidate, topIsRiskiest bool) (string, float64) {
+	if mustGuess {
+		return top.Word, 0
+	}
+
+	threshold := cfg.MandatedThreshold
+	if guessesThisTurn >= clueNumber {
+		threshold = cfg.BonusThreshold
+	}
+	if topIsRiskiest {
+		threshold += cfg.RiskiestWordPenalty
+	}
+
+	// <=, not <: a candidate sitting exactly on the bar passes rather than
+	// guesses — ties go to caution, not confidence.
+	if top.Confidence <= threshold {
+		return codenames.PassGuess, threshold
+	}
+	return top.Word, threshold
+}
+
+// stripCodeFences removes a wrapping ```json ... ``` or ``` ... ``` block,
+// which local models emit around JSON regardless of being told not to.
+func stripCodeFences(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	s = strings.TrimPrefix(s, "```")
+	if nl := strings.IndexByte(s, '\n'); nl >= 0 && strings.TrimSpace(s[:nl]) != "" {
+		// Leading language tag on the fence line (e.g. "json") — drop it.
+		s = s[nl+1:]
+	}
+	s = strings.TrimSuffix(strings.TrimSpace(s), "```")
+	return strings.TrimSpace(s)
+}
+
+func extractJSONObject(s string) (string, bool) {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return "", false
+	}
+	depth := 0
+	for i := start; i < len(s); i++ {
+		switch s[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1], true
+			}
+		}
+	}
+	return "", false
+}
+
+
+func parseCandidateResponse(reply string, unrevealed []string) (*CandidateResponse, error) {
+	cleaned := stripCodeFences(reply)
+
+	var resp CandidateResponse
+	if err := json.Unmarshal([]byte(cleaned), &resp); err != nil {
+		// Fall back to scanning for a balanced {...} in case of surrounding
+		// prose the model wasn't supposed to add.
+		obj, ok := extractJSONObject(cleaned)
+		if !ok {
+			return nil, fmt.Errorf("no JSON object found in reply: %w", err)
+		}
+		if err := json.Unmarshal([]byte(obj), &resp); err != nil {
+			return nil, fmt.Errorf("invalid JSON: %w", err)
 		}
 	}
 
-	// The model might have added extra text. Check if any board word appears
-	// in the first line of the response.
-	firstLine := strings.Split(reply, "\n")[0]
-	firstLine = strings.ToLower(strings.TrimSpace(firstLine))
-	for _, w := range boardWords {
-		if strings.EqualFold(firstLine, w) {
-			return w
-		}
+	if len(resp.Candidates) == 0 {
+		return nil, errors.New("candidates was empty")
 	}
 
-	// Fallback: find any board word contained in the response.
-	lower := strings.ToLower(reply)
-	for _, w := range boardWords {
-		if strings.Contains(lower, strings.ToLower(w)) {
-			return w
-		}
+	byLower := make(map[string]string, len(unrevealed))
+	for _, w := range unrevealed {
+		byLower[strings.ToLower(strings.TrimSpace(w))] = w
 	}
 
-	// No valid board word found.
-	return ""
+	valid := make([]Candidate, 0, len(resp.Candidates))
+	for _, c := range resp.Candidates {
+		canonical, ok := byLower[strings.ToLower(strings.TrimSpace(c.Word))]
+		if !ok {
+			// A hallucinated word is dropped, not a hard reject on its own —
+			// the model may still have reported other, valid candidates. Only
+			// an empty result after filtering is a parse error (below).
+			log.Printf("[LLM Operative] dropping hallucinated candidate %q (not an unrevealed board word)", c.Word)
+			continue
+		}
+		c.Word = canonical
+		c.Confidence = clampConfidence(c.Confidence)
+		c.RawConfidence = c.Confidence
+		valid = append(valid, c)
+	}
+	if len(valid) == 0 {
+		return nil, fmt.Errorf("no candidate word matched an unrevealed board word (got %d hallucinated)", len(resp.Candidates))
+	}
+	resp.Candidates = valid
+
+	if canonical, ok := byLower[strings.ToLower(strings.TrimSpace(resp.RiskiestBoardWord))]; ok {
+		resp.RiskiestBoardWord = canonical
+	}
+
+	return &resp, nil
+}
+
+func clampConfidence(c float64) float64 {
+	return min(1, max(0, c))
 }

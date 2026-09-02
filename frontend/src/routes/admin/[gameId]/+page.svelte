@@ -110,7 +110,9 @@
 							<td class="px-3 py-2">{e.backend}</td>
 							<td class="px-3 py-2 capitalize">{e.action}</td>
 							<td class="px-3 py-2 font-medium">{e.detail}</td>
-							<td class="px-3 py-2 text-gray-600">{e.reasoning}</td>
+							<td class="max-w-xl min-w-[20rem] px-3 py-2 whitespace-pre-wrap text-gray-600">
+								{e.reasoning}
+							</td>
 						</tr>
 					{/each}
 				</tbody>

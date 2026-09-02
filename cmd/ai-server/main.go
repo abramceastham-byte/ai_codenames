@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/bcspragu/Codenames/cryptorand"
@@ -43,8 +44,12 @@ func run(args []string) error {
 		commonWordlist      = fSet.String("common_wordlist", "", "Path to word list of most common words, used for making guesses")
 		webServerEndpoint   = fSet.String("web_server_endpoint", "", "The address to connect to the Codenames game web server")
 		ollamaEndpoint      = fSet.String("ollama_endpoint", "http://localhost:11434", "Ollama API endpoint")
-		ollamaModel         = fSet.String("ollama_model", "llama3", "Ollama model name")
+		ollamaModel         = fSet.String("ollama_model", "qwq:32b", "Ollama model name")
 		ollamaTimeout       = fSet.Duration("ollama_timeout", llm.DefaultTimeout, "Max time to wait for an Ollama call (and total budget across guess retries) before falling back to a random legal move")
+		ollamaMaxTokens     = fSet.Int("ollama_max_tokens", llm.DefaultMaxTokens, "Max tokens Ollama may generate per reply (thinking + answer), passed as num_predict; the real lever on response latency for a reasoning model")
+		ollamaTemperature   = fSet.Float64("ollama_temperature", llm.DefaultTemperature, "Ollama sampling temperature (higher = more creative/random word choices). Sent on every call so it's a fixed, known number for research comparisons instead of an implicit Ollama default")
+		ollamaSeed          = fSet.Int("ollama_seed", -1, "Ollama sampling seed; -1 (default) leaves sampling random so games vary. Set a specific value to make replies to identical prompts reproducible, e.g. for research runs")
+		ollamaThink         = fSet.String("ollama_think", "", "Set Ollama's top-level \"think\" field to force reasoning on/off for models that support toggling it (e.g. qwen3): \"true\" or \"false\". Empty (default) sends nothing, leaving qwq and other pure reasoning models unaffected")
 		reasoningLogPath    = fSet.String("reasoning_log_path", "logs/ai_reasoning.jsonl", "Path to JSONL file where AI reasoning for clues/guesses is logged")
 	)
 	if err := ff.Parse(fSet, args[1:], ff.WithEnvVars()); err != nil {
@@ -73,8 +78,21 @@ func run(args []string) error {
 			}
 			ais["w2v"] = w2vAI
 		case "llm":
-			log.Printf("Loading LLM backend via Ollama at %s with model %s (timeout %s)", *ollamaEndpoint, *ollamaModel, *ollamaTimeout)
-			ais["llm"] = llm.New(*ollamaEndpoint, *ollamaModel, *ollamaTimeout)
+			llmOpts := []llm.Option{llm.WithTemperature(*ollamaTemperature)}
+			if *ollamaSeed != -1 {
+				llmOpts = append(llmOpts, llm.WithSeed(*ollamaSeed))
+			}
+			thinkDesc := "unset"
+			if *ollamaThink != "" {
+				think, err := strconv.ParseBool(*ollamaThink)
+				if err != nil {
+					return fmt.Errorf("--ollama_think %q must be \"true\" or \"false\": %w", *ollamaThink, err)
+				}
+				llmOpts = append(llmOpts, llm.WithThink(think))
+				thinkDesc = strconv.FormatBool(think)
+			}
+			log.Printf("Loading LLM backend via Ollama at %s with model %s (timeout %s, max tokens %d, temperature %v, seed %d, think %s)", *ollamaEndpoint, *ollamaModel, *ollamaTimeout, *ollamaMaxTokens, *ollamaTemperature, *ollamaSeed, thinkDesc)
+			ais["llm"] = llm.New(*ollamaEndpoint, *ollamaModel, *ollamaTimeout, *ollamaMaxTokens, llmOpts...)
 		default:
 			return fmt.Errorf("unknown backend %q in --enabled_backends", name)
 		}

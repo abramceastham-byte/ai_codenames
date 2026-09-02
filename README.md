@@ -15,7 +15,7 @@ Pretty much everything is written in Go, with the frontend in Svelte 5 + TypeScr
 
 ## Running Locally
 
-Make sure you have a recent version of Go + TypeScript installed. If you want to use the LLM player, also install [Ollama](https://ollama.com) and pull a model (e.g. `ollama pull llama3`). Then:
+Make sure you have a recent version of Go + TypeScript installed. If you want to use the LLM player, also install [Ollama](https://ollama.com) and pull a model (e.g. `ollama pull qwq:32b` — a ~20GB download; it's a reasoning model, so expect noticeably slower responses than a small instruct model). Then:
 
 ```bash
 # Run the backend web server
@@ -42,7 +42,7 @@ WEB_SERVER_ENDPOINT=http://localhost:8080 \
 ENABLED_BACKENDS=w2v,llm \
 DEFAULT_BACKEND=w2v \
 OLLAMA_ENDPOINT=http://localhost:11434 \
-OLLAMA_MODEL=llama3 \
+OLLAMA_MODEL=qwq:32b \
 go run ./cmd/ai-server/
 ```
 
@@ -71,7 +71,7 @@ The AI server supports two backends, configured via `ENABLED_BACKENDS` (comma-se
 | Backend | Description | Required env vars |
 |---|---|---|
 | `w2v` | Algorithmic player using GloVe + ConceptNet word embeddings | `GLOVE_MODEL_PATH`, `CONCEPT_NET_MODEL_PATH`, `COMMON_WORDLIST` |
-| `llm` | Large language model player via Ollama | `OLLAMA_ENDPOINT` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `llama3`) |
+| `llm` | Large language model player via Ollama | `OLLAMA_ENDPOINT` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `qwq:32b`) |
 
 `DEFAULT_BACKEND` selects which one is used when a caller doesn't specify (defaults to the first enabled backend, alphabetically). You can also enable just one — e.g. `ENABLED_BACKENDS=llm` skips loading the w2v models entirely.
 
