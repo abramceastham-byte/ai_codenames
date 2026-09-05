@@ -51,6 +51,7 @@ func run(args []string) error {
 		ollamaSeed          = fSet.Int("ollama_seed", -1, "Ollama sampling seed; -1 (default) leaves sampling random so games vary. Set a specific value to make replies to identical prompts reproducible, e.g. for research runs")
 		ollamaThink         = fSet.String("ollama_think", "", "Set Ollama's top-level \"think\" field to force reasoning on/off for models that support toggling it (e.g. qwen3): \"true\" or \"false\". Empty (default) sends nothing, leaving qwq and other pure reasoning models unaffected")
 		reasoningLogPath    = fSet.String("reasoning_log_path", "logs/ai_reasoning.jsonl", "Path to JSONL file where AI reasoning for clues/guesses is logged")
+		llmVerbose          = fSet.Bool("llm_verbose", false, "Log each LLM attempt's full raw reply and token counters. Off by default: a reasoning model's reply is thousands of characters of <think>, which buries the per-move summary blocks. Rejected attempts are logged either way")
 	)
 	if err := ff.Parse(fSet, args[1:], ff.WithEnvVars()); err != nil {
 		return fmt.Errorf("failed to parse flags: %w", err)
@@ -78,7 +79,7 @@ func run(args []string) error {
 			}
 			ais["w2v"] = w2vAI
 		case "llm":
-			llmOpts := []llm.Option{llm.WithTemperature(*ollamaTemperature)}
+			llmOpts := []llm.Option{llm.WithTemperature(*ollamaTemperature), llm.WithVerboseLogs(*llmVerbose)}
 			if *ollamaSeed != -1 {
 				llmOpts = append(llmOpts, llm.WithSeed(*ollamaSeed))
 			}

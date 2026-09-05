@@ -165,8 +165,14 @@ func (g *Game) Move(mv *Move) (*codenames.GameState, codenames.GameStatus, error
 }
 
 func (g *Game) handleGiveClue(clue *codenames.Clue) {
-	numGuesses := clue.Count
-	if numGuesses == 0 {
+	// +1 for the standard Codenames bonus guess: a team that guesses all
+	// clue.Count words correctly, with none wrong along the way, gets one
+	// extra optional guess. It's still bounded by canKeepGuessing like any
+	// other guess (a wrong guess or a pass ends the turn immediately,
+	// bonus or not) — this only raises the ceiling, it doesn't force the
+	// extra guess to be taken.
+	numGuesses := clue.Count + 1
+	if clue.Count == 0 {
 		numGuesses = -1
 	}
 
@@ -211,6 +217,13 @@ func (g *Game) endTurn() {
 
 func (g *Game) Play() (*Outcome, error) {
 	for {
+		// A finished game is the only non-error exit from this loop. Checked
+		// at the top of the round as well as inside the guess loop below,
+		// because a game can end on either boundary.
+		if over, winner := g.GameOver(); over {
+			return &Outcome{Winner: winner}, nil
+		}
+
 		// Let's play a round.
 		sm, op := g.cfg.RedSpymaster, g.cfg.RedOperative
 		if g.state.ActiveTeam == codenames.BlueTeam {
@@ -230,9 +243,25 @@ func (g *Game) Play() (*Outcome, error) {
 		}
 
 		for g.state.ActiveRole == codenames.OperativeRole {
+			// handleGuess deliberately returns without ending the turn once
+			// the game is over, leaving ActiveRole on the operative — so
+			// without this check the loop would keep asking for guesses on a
+			// finished board forever.
+			if over, winner := g.GameOver(); over {
+				return &Outcome{Winner: winner}, nil
+			}
+
 			guess, err := op.Guess(codenames.Revealed(g.state.Board, codenames.Playing), clue)
 			if err != nil {
 				return nil, fmt.Errorf("guess on %q: %v", g.state.ActiveTeam, err)
+			}
+			// An Operative declines a guess with the codenames.PassGuess
+			// sentinel, but Move expresses passing as an empty guess.
+			// Translate here, the same way cmd/ai-server does before handing
+			// a guess to the web server — otherwise reveal() goes looking for
+			// a card literally named "<pass>" and the game errors out.
+			if guess == codenames.PassGuess {
+				guess = ""
 			}
 			if _, _, err = g.Move(&Move{
 				Action: ActionGuess,

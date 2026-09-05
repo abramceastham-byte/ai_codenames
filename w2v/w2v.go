@@ -82,6 +82,11 @@ type clueCandidate struct {
 type pair struct {
 	Word       string
 	Similarity float32
+	// Agent is the card's true affiliation. Populated whenever the caller has
+	// full board visibility (the spymaster's view); left UnknownAgent when
+	// ranked from the operative's own (redacted) board, since that's all the
+	// operative legitimately gets.
+	Agent codenames.Agent
 }
 
 // formatClueReasoning summarizes the top-ranked clue candidates (winner plus
@@ -484,26 +489,32 @@ func (ai *AI) GuessOrPassWithReasoning(b *codenames.Board, c *codenames.Clue, mu
 	return ai.guessOrPass(b, c, mustGuess)
 }
 
-func (ai *AI) guessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, string, error) {
-	guessableTargets := codenames.Unused(b.Cards)
-
-	embedMapping := makeEmbedMapping(ai.ConceptNetModel, guessableTargets, []codenames.Card{{Codename: c.Word}})
-	guessableTargets = embedMapping.filterToValid(guessableTargets)
+// rankBoardWords ranks cards by ConceptNet similarity to clueWord, most
+// similar first. Each returned pair's Agent mirrors the Agent already on the
+// card passed in — so it carries real team info when called with a
+// spymaster's full board, and UnknownAgent when called with an operative's
+// redacted one. Shared by guessOrPass (operative, redacted board) and
+// BonusGuessSignal (spymaster, full board) so the ranking logic itself is
+// never duplicated.
+func (ai *AI) rankBoardWords(cards []codenames.Card, clueWord string) []pair {
+	embedMapping := makeEmbedMapping(ai.ConceptNetModel, cards, []codenames.Card{{Codename: clueWord}})
+	cards = embedMapping.filterToValid(cards)
 
 	var pairs []pair
-	for _, card := range guessableTargets {
-		sim, err := ai.similarity(embedMapping.toEmbedWord[c.Word], embedMapping.toEmbedWord[card.Codename])
+	for _, card := range cards {
+		sim, err := ai.similarity(embedMapping.toEmbedWord[clueWord], embedMapping.toEmbedWord[card.Codename])
 		if errors.Is(err, &word2vec.NotFoundError{}) {
 			continue
 		}
 		if err != nil {
-			log.Printf("failed to get similarity of %q and %q: %v", c.Word, card.Codename, err)
+			log.Printf("failed to get similarity of %q and %q: %v", clueWord, card.Codename, err)
 			continue
 		}
 
 		pairs = append(pairs, pair{
 			Word:       card.Codename,
 			Similarity: sim,
+			Agent:      card.Agent,
 		})
 	}
 
@@ -511,6 +522,73 @@ func (ai *AI) guessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool)
 	sort.Slice(pairs, func(i, j int) bool {
 		return pairs[i].Similarity > pairs[j].Similarity
 	})
+	return pairs
+}
+
+// BonusGuessSignal computes the two risk signals operative.AllowBonus needs
+// — margin and assassinInTop3 — for a clue just given, using the spymaster's
+// full, unredacted board.
+//
+// CALLER MUST PASS THE SPYMASTER'S FULL BOARD, NEVER THE OPERATIVE'S. The
+// operative's own board view has every unrevealed card's Agent zeroed to
+// UnknownAgent (codenames.Revealed), so calling this with that board would
+// silently produce a meaningless margin (no card would ever match ourAgent)
+// and assassinInTop3 always false — not an error, just quietly wrong, which
+// is worse than a crash. This method exists specifically so that
+// computation only ever happens where a full board is legitimately
+// available (spymaster-side, at clue-give time), never inside the
+// operative's own guess path.
+//
+// margin is the ConceptNet-similarity gap, for clueWord, between our team's
+// best remaining unrevealed word and the best remaining non-team word
+// (opponent, bystander, or assassin) — negative if a non-team word actually
+// scores higher than anything on our team. assassinInTop3 is true when the
+// assassin is among the 3 highest-scoring unrevealed words overall,
+// regardless of margin (see operative.AllowBonus's doc comment for why that
+// can't be folded into margin alone).
+func (ai *AI) BonusGuessSignal(b *codenames.Board, ourAgent codenames.Agent, clueWord string) (margin float64, assassinInTop3 bool) {
+	var unrevealed []codenames.Card
+	for _, card := range b.Cards {
+		if !card.Revealed {
+			unrevealed = append(unrevealed, card)
+		}
+	}
+
+	pairs := ai.rankBoardWords(unrevealed, clueWord)
+
+	var topOurs, topOther float32
+	haveOurs, haveOther := false, false
+	for _, p := range pairs {
+		if p.Agent == ourAgent {
+			if !haveOurs {
+				topOurs = p.Similarity
+				haveOurs = true
+			}
+			continue
+		}
+		if !haveOther {
+			topOther = p.Similarity
+			haveOther = true
+		}
+	}
+	if haveOurs && haveOther {
+		margin = float64(topOurs - topOther)
+	}
+
+	top := min(3, len(pairs))
+	for _, p := range pairs[:top] {
+		if p.Agent == codenames.Assassin {
+			assassinInTop3 = true
+			break
+		}
+	}
+
+	return margin, assassinInTop3
+}
+
+func (ai *AI) guessOrPass(b *codenames.Board, c *codenames.Clue, mustGuess bool) (string, string, error) {
+	guessableTargets := codenames.Unused(b.Cards)
+	pairs := ai.rankBoardWords(guessableTargets, c.Word)
 
 	// This is a crutch for when the player enters a word that isn't in the model.
 	if len(pairs) == 0 {

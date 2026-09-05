@@ -591,7 +591,22 @@ func TestDecideGuessBoundaryIsCautious(t *testing.T) {
 }
 
 func TestApplyLinkTypeCaps(t *testing.T) {
-	cfg := DefaultGuessDecisionConfig // direct 1.00, category 0.75, idiom 0.35, multi_hop 0.40, unknown 0.35
+	// An explicit fixture rather than DefaultGuessDecisionConfig: this test
+	// covers the capping mechanism (case-insensitive matching, the unknown
+	// fallback, leaving an already-low candidate alone), not the particular
+	// numbers shipped as defaults. Tuning a default should not break it.
+	cfg := GuessDecisionConfig{
+		MandatedThreshold:   0.55,
+		BonusThreshold:      0.80,
+		RiskiestWordPenalty: 0.15,
+		LinkTypeCaps: map[string]float64{
+			"direct":    1.00,
+			"category":  0.75,
+			"idiom":     0.35,
+			"multi_hop": 0.40,
+		},
+		UnknownLinkTypeCap: 0.35,
+	}
 
 	tests := []struct {
 		name           string

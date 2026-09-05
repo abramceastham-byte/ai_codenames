@@ -19,6 +19,7 @@ import (
 	"github.com/bcspragu/Codenames/httperr"
 	"github.com/bcspragu/Codenames/llm"
 	"github.com/bcspragu/Codenames/msgs"
+	"github.com/bcspragu/Codenames/operative"
 )
 
 // AI is the interface that AI backends must implement.
@@ -50,6 +51,15 @@ type Server struct {
 	reasoningLog     *os.File
 	reasoningLogPath string
 	reasoningMu      sync.Mutex
+
+	// bonusAllowed caches, per game+team, whether operative.AllowBonus said
+	// yes for the most recent clue — computed once at clue-give time from the
+	// spymaster's full board (see recordBonusSignal), then consulted by that
+	// same team's operative goroutine before attempting a bonus ((N+1)th)
+	// guess. Keyed by gameID+":"+team since both roles' goroutines share this
+	// one *Server per AI-server process.
+	bonusMu      sync.Mutex
+	bonusAllowed map[string]bool
 }
 
 func newServer(ais map[string]AI, defaultBackend, authSecret, webServerEndpoint string, r *rand.Rand, reasoningLog *os.File, reasoningLogPath string) *Server {
@@ -62,6 +72,7 @@ func newServer(ais map[string]AI, defaultBackend, authSecret, webServerEndpoint 
 		activePlayers:     make(map[codenames.RobotID]*activePlayer),
 		reasoningLog:      reasoningLog,
 		reasoningLogPath:  reasoningLogPath,
+		bonusAllowed:      make(map[string]bool),
 	}
 	srv.initMux()
 	return srv
@@ -104,6 +115,10 @@ type reasoningLogEntry struct {
 	ClueNumber             int                 `json:"clue_number,omitempty"`
 	ThresholdApplied       float64             `json:"threshold_applied,omitempty"`
 	ParseError             bool                `json:"parse_error,omitempty"`
+	// RandomFallback marks a guess the AI never actually chose: the backend
+	// errored or returned nothing and s.guess substituted a uniformly random
+	// unrevealed card. Detail holds that substituted word.
+	RandomFallback bool `json:"random_fallback,omitempty"`
 	// CapApplied is true when at least one candidate's confidence was reduced
 	// by its link_type cap (llm.GuessDecisionConfig.LinkTypeCaps) — i.e. the
 	// model reported a higher confidence than its own calibration rule
@@ -520,6 +535,22 @@ func (s *Server) playGame(ai AI, backendName string, c *client.Client, gID coden
 			}
 
 			if gg.Team == team && gg.CanKeepGuessing && role == codenames.OperativeRole {
+				// guessesThisTurn already counts every correct guess made so
+				// far (incremented above); once it reaches the clue's count,
+				// every guess it called for has landed and any further guess
+				// is the bonus (N+1)th one — gated by the risk decision
+				// recordBonusSignal cached back when the clue was given.
+				if lastClue != nil && guessesThisTurn >= lastClue.Count {
+					if !s.bonusAllowedFor(gID, team) {
+						log.Printf("Bonus guess declined for clue %+v (guessesThisTurn=%d) — ending turn", lastClue, guessesThisTurn)
+						if err := c.GiveGuess(gID, "", true /* confirmed */); err != nil {
+							log.Printf("[ERROR] failed to end turn declining bonus guess: %v", err)
+						}
+						return
+					}
+					log.Printf("Bonus guess allowed for clue %+v (guessesThisTurn=%d)", lastClue, guessesThisTurn)
+				}
+
 				round := max(teamClueCount[codenames.RedTeam], teamClueCount[codenames.BlueTeam])
 				rc := reasoningCtx{gameID: gID, backend: backendName, team: team, round: round}
 				guess, pg, err := s.guess(ai, gg.Game.State.Board, lastClue, false /* mustGuess */, guessesThisTurn, revealedThisTurn, rc)
@@ -577,6 +608,77 @@ type reasoningSpymaster interface {
 	GiveClueWithReasoning(b *codenames.Board, agent codenames.Agent) (*codenames.Clue, string, error)
 }
 
+// bonusSignaler is implemented by AI backends that can compute the
+// bonus-guess risk signal (see operative.AllowBonus) from a full, unredacted
+// board — currently only w2v.AI, which already ranks board words by
+// similarity to a clue for ordinary guessing and can reuse that same ranking
+// here. Deliberately NOT implemented by llm.AI: this must never run against
+// the operative's own (redacted) board view, and gating it behind a small
+// interface makes that impossible to get backwards by accident — only the
+// spymaster call site below (which legitimately holds the full board) calls
+// this.
+type bonusSignaler interface {
+	BonusGuessSignal(b *codenames.Board, ourAgent codenames.Agent, clueWord string) (margin float64, assassinInTop3 bool)
+}
+
+// bonusKey identifies one team's most recent bonus-guess decision within a
+// game, for Server.bonusAllowed.
+func bonusKey(gameID codenames.GameID, team codenames.Team) string {
+	return string(gameID) + ":" + string(team)
+}
+
+// recordBonusSignal computes and caches whether this team's operative should
+// be allowed a bonus ((N+1)th) guess after the clue just given, using the
+// spymaster's full board — never call with a redacted one. For a backend
+// that doesn't implement bonusSignaler (e.g. the LLM operative, which has its
+// own confidence-threshold gate instead and isn't meant to go through this
+// path at all), it clears any stale cached decision instead of computing one.
+func (s *Server) recordBonusSignal(ai AI, b *codenames.Board, team codenames.Team, gID codenames.GameID, clue *codenames.Clue) {
+	bs, ok := ai.(bonusSignaler)
+	key := bonusKey(gID, team)
+	s.bonusMu.Lock()
+	defer s.bonusMu.Unlock()
+	if !ok {
+		// No signal available for this backend — remove any stale decision
+		// from a previous clue/backend rather than leaving it to be
+		// misapplied to this one.
+		delete(s.bonusAllowed, key)
+		return
+	}
+
+	ourAgent := toAgent(team)
+	theirAgent := toAgent(opposingTeam(team))
+	var oursLeft, theirsLeft int
+	for _, card := range b.Cards {
+		if card.Revealed {
+			continue
+		}
+		switch card.Agent {
+		case ourAgent:
+			oursLeft++
+		case theirAgent:
+			theirsLeft++
+		}
+	}
+
+	margin, assassinInTop3 := bs.BonusGuessSignal(b, ourAgent, clue.Word)
+	allowed := operative.AllowBonus(oursLeft, theirsLeft, margin, assassinInTop3)
+	s.bonusAllowed[key] = allowed
+	log.Printf("[Bonus] game=%q team=%q clue=%q oursLeft=%d theirsLeft=%d margin=%.3f assassinInTop3=%v -> allowed=%v",
+		gID, team, clue.String(), oursLeft, theirsLeft, margin, assassinInTop3, allowed)
+}
+
+// bonusAllowedFor reports whether the cached decision for this team's most
+// recent clue permits a bonus guess. Defaults to false — including when no
+// decision was ever recorded (e.g. a non-w2v backend, or a human spymaster
+// teammate no AI signal exists for) — since an unknown risk should never be
+// treated as a green light.
+func (s *Server) bonusAllowedFor(gID codenames.GameID, team codenames.Team) bool {
+	s.bonusMu.Lock()
+	defer s.bonusMu.Unlock()
+	return s.bonusAllowed[bonusKey(gID, team)]
+}
+
 func (s *Server) giveClue(ai AI, b *codenames.Board, agent codenames.Agent, rc reasoningCtx) (*codenames.Clue, error) {
 	start := time.Now()
 
@@ -603,6 +705,12 @@ func (s *Server) giveClue(ai AI, b *codenames.Board, agent codenames.Agent, rc r
 	if suspect != "" {
 		log.Printf("[WARN] clue %q may be a compound of board word %q (allowed, logged)", clue.Word, suspect)
 	}
+
+	// Must happen here, with this full board, while we still legitimately
+	// have it — this team's operative goroutine (which only ever sees a
+	// redacted board) will consult the cached result later via
+	// bonusAllowedFor, once it's made all N guesses this clue calls for.
+	s.recordBonusSignal(ai, b, rc.team, rc.gameID, clue)
 
 	s.logReasoning(reasoningLogEntry{
 		GameID:            rc.gameID,
@@ -654,7 +762,7 @@ func toAgent(team codenames.Team) codenames.Agent {
 // confidence-scored candidates and let Go threshold logic decide whether to
 // guess or pass (see llm.GuessWithCandidates).
 type candidateOperative interface {
-	GuessWithCandidates(b *codenames.Board, c *codenames.Clue, mustGuess bool, guessesThisTurn int, revealedHistory []string) (*llm.GuessResult, error)
+	GuessWithCandidates(b *codenames.Board, c *codenames.Clue, team string, mustGuess bool, guessesThisTurn int, revealedHistory []string) (*llm.GuessResult, error)
 }
 
 // passingOperative is implemented by AI backends that can decline to guess
@@ -719,7 +827,7 @@ func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue, mustGues
 	switch v := ai.(type) {
 	case candidateOperative:
 		var res *llm.GuessResult
-		res, err = v.GuessWithCandidates(b, clue, mustGuess, guessesThisTurn, revealedHistory)
+		res, err = v.GuessWithCandidates(b, clue, string(rc.team), mustGuess, guessesThisTurn, revealedHistory)
 		if res != nil {
 			guess = res.Guess
 			entry.Detail = res.Guess
@@ -755,6 +863,17 @@ func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue, mustGues
 	if err != nil || guess == "" {
 		log.Printf("[ERROR] AI failed to make a guess: %v", err)
 		guess, err = s.guessRandomly(b)
+		// Record what actually got played, not the empty/failed value the
+		// backend returned — otherwise a silent fallback shows up in
+		// logs/ai_reasoning.jsonl as a guess with no detail, and a random
+		// word on the board looks indistinguishable from a real decision.
+		if err == nil {
+			entry.Detail = guess
+			entry.RandomFallback = true
+			if entry.Reasoning == "" {
+				entry.Reasoning = "no reasoning available: guessed at random after the backend failed to produce a guess"
+			}
+		}
 	} else if guess == codenames.PassGuess {
 		guess = ""
 	}
