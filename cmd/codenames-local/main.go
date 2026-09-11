@@ -43,7 +43,7 @@ func main() {
 		useAI          = flag.Bool("use_ai", false, "Whether or not the starting team should be an AI.")
 		aiBackend      = flag.String("ai_backend", "w2v", "AI backend to use: 'w2v' or 'llm'")
 		ollamaEndpoint = flag.String("ollama_endpoint", "http://localhost:11434", "Ollama API endpoint")
-		ollamaModel    = flag.String("ollama_model", "qwq:32b", "Ollama model name")
+		ollamaModel    = flag.String("ollama_model", "qwen3:30b-a3b", "Ollama model name")
 	)
 	flag.Parse()
 

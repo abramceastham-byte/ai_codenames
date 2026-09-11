@@ -31,7 +31,8 @@ var testBoard = []codenames.Card{
 // line and CLUE/TARGETS/NUMBER lines derived from clue and targets.
 func validClueReply(clue string, targets []string) string {
 	targetsLine := strings.Join(targets, ", ")
-	return fmt.Sprintf(`ASSASSIN: clear
+	return fmt.Sprintf(`RISK: even score, neither side close; the links carry the count
+ASSASSIN: clear
 
 CLUE: %s
 TARGETS: %s
@@ -88,7 +89,8 @@ func TestParseClueResponse(t *testing.T) {
 // model was forced to write out actually makes it into the logged
 // reasoning, not just into a validation gate that then discards it.
 func TestReasoningIncludesSafetyChecks(t *testing.T) {
-	reply := `ASSASSIN: too close to assassin "ninja", avoided by picking lid instead
+	reply := `RISK: 4 words to their 2, a wrong guess here loses the tempo I can't spare
+ASSASSIN: too close to assassin "ninja", avoided by picking lid instead
 
 CLUE: lid
 TARGETS: mug
@@ -113,14 +115,33 @@ func TestParseClueResponseRejects(t *testing.T) {
 			reply: "OCEAN 3\nREASON: whale, ship and wave are in the ocean",
 		},
 		{
+			name: "risk line missing",
+			reply: `ASSASSIN: clear
+
+CLUE: lid
+TARGETS: mug, mail
+NUMBER: 2`,
+		},
+		{
+			name: "risk line empty",
+			reply: `RISK:
+ASSASSIN: clear
+
+CLUE: lid
+TARGETS: mug
+NUMBER: 1`,
+		},
+		{
 			name: "assassin line missing",
-			reply: `CLUE: lid
+			reply: `RISK: even score, no rush
+CLUE: lid
 TARGETS: mug, mail
 NUMBER: 2`,
 		},
 		{
 			name: "assassin line empty",
-			reply: `ASSASSIN:
+			reply: `RISK: even score, no rush
+ASSASSIN:
 
 CLUE: lid
 TARGETS: mug
@@ -128,7 +149,8 @@ NUMBER: 1`,
 		},
 		{
 			name: "duplicate target would inflate the count",
-			reply: `ASSASSIN: clear
+			reply: `RISK: even score, no rush
+ASSASSIN: clear
 
 CLUE: lid
 TARGETS: mug, mug
@@ -140,7 +162,8 @@ NUMBER: 2`,
 		},
 		{
 			name: "empty targets",
-			reply: `ASSASSIN: clear
+			reply: `RISK: even score, no rush
+ASSASSIN: clear
 
 CLUE: lid
 TARGETS:
@@ -182,7 +205,8 @@ NUMBER: 0`,
 		},
 		{
 			name: "NUMBER does not match TARGETS count",
-			reply: `ASSASSIN: clear
+			reply: `RISK: even score, no rush
+ASSASSIN: clear
 
 CLUE: lid
 TARGETS: mug, mail
@@ -190,7 +214,8 @@ NUMBER: 5`,
 		},
 		{
 			name: "NUMBER is not an integer",
-			reply: `ASSASSIN: clear
+			reply: `RISK: even score, no rush
+ASSASSIN: clear
 
 CLUE: lid
 TARGETS: mug

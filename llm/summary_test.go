@@ -69,7 +69,8 @@ func TestParseWhyLine(t *testing.T) {
 // only, and rejecting on it would burn a retry on a valid move.
 func TestParseClueAcceptsBadWhy(t *testing.T) {
 	board := []codenames.Card{{Codename: "whale"}, {Codename: "ship"}, {Codename: "shadow"}}
-	reply := `ASSASSIN: clear, no relation to "shadow"
+	reply := `RISK: mid-game, both links are ones anyone would make
+ASSASSIN: clear, no relation to "shadow"
 CLUE: ocean
 TARGETS: whale, ship
 WHY: this is not the expected format at all
@@ -89,7 +90,8 @@ NUMBER: 2`
 
 func TestParseClueOmittedWhy(t *testing.T) {
 	board := []codenames.Card{{Codename: "whale"}, {Codename: "ship"}, {Codename: "shadow"}}
-	reply := `ASSASSIN: clear
+	reply := `RISK: mid-game, both links are ones anyone would make
+ASSASSIN: clear
 CLUE: ocean
 TARGETS: whale, ship
 NUMBER: 2`

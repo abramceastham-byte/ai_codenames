@@ -138,6 +138,14 @@ func spymasterSummary(teamName string, p *clueParse) string {
 		b.addWrapped("      ", why)
 	}
 
+	// The position read sits next to the count it produced, so a clue that
+	// looks timid or reckless in isolation can be read against the reasoning
+	// that chose it — the whole point of making the model derive the count
+	// rather than being handed one.
+	b.addBlank()
+	b.addSection("POSITION READ")
+	b.addWrapped("  ", truncate(p.Risk, 400))
+
 	b.addBlank()
 	b.addSection("ASSASSIN")
 	b.addWrapped("  ", truncate(p.Assassin, 240))

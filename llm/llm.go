@@ -19,9 +19,9 @@ import (
 )
 
 const DefaultTimeout = 3 * time.Minute
-const DefaultMaxTokens = 3000
-const DefaultGuessMaxTokens = 3000
-const DefaultTemperature = 0.6
+const DefaultMaxTokens = 8000
+const DefaultGuessMaxTokens = 8000
+const DefaultTemperature = 0.3
 
 // AI implements codenames.Spymaster and codenames.Operative using a local
 // Ollama model.
@@ -86,6 +86,23 @@ func (ai *AI) guessFormatInstructions() string {
 	return `Do your reasoning inside your thinking. Once you're done thinking, output nothing but the JSON object below — no summary, no explanation, no repetition of your thinking outside it.`
 }
 
+// positionBrief states the arithmetic of the current score, how many turns
+// each side needs at one, two and three words per turn, and stops there.
+func positionBrief(myLeft, oppLeft int) string {
+	turns := func(left, rate int) int {
+		if left <= 0 {
+			return 0
+		}
+		return (left + rate - 1) / rate
+	}
+	line := func(who string, left int) string {
+		return fmt.Sprintf("  %-5s %d word(s) left — %d turn(s) at 1 word/turn, %d at 2/turn, %d at 3/turn",
+			who, left, turns(left, 1), turns(left, 2), turns(left, 3))
+	}
+	return fmt.Sprintf("Turns to finish, if every clue from here lands perfectly:\n%s\n%s",
+		line("you:", myLeft), line("them:", oppLeft))
+}
+
 func New(endpoint, model string, timeout time.Duration, maxTokens int, opts ...Option) *AI {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
@@ -121,13 +138,6 @@ type chatReqOptions struct {
 type chatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
-	// Thinking carries a reasoning model's deliberation when Ollama is asked
-	// for it via the top-level "think" field. Models differ in where they put
-	// it: qwq and friends inline it into Content wrapped in <think> tags,
-	// while a model driven by "think": true returns it here with Content
-	// holding only the final answer. Both paths have to be read — see
-	// thinkingFrom — or a reply that spent its whole budget deliberating
-	// looks indistinguishable from an empty one.
 	Thinking string `json:"thinking"`
 }
 
@@ -178,12 +188,7 @@ func (ai *AI) chat(ctx context.Context, messages []chatMessage, format string, n
 
 const thinkOpenTag, thinkCloseTag = "<think>", "</think>"
 
-// thinkingFrom returns the model's deliberation and its final answer,
-// accepting either convention: inline <think> tags inside the content, or
-// Ollama's separate "thinking" field. Without the second case, a model that
-// exhausts num_predict before emitting any answer reports empty content AND
-// empty thinking, so the truncated-thinking retry below never fires and all
-// three attempts fail identically on the same budget.
+// thinkingFrom returns the model's deliberation and its final answer
 func thinkingFrom(raw string, msg chatMessage) (reply, thinking string) {
 	reply, thinking = splitThinking(raw)
 	if thinking == "" {
@@ -271,27 +276,53 @@ Rules:
 - You MUST avoid clues that relate to the assassin word — guessing it loses the game instantly.
 - You should avoid clues that relate to opponent words or bystanders.
 - Every word you list as a target must be one of YOUR team's words, spelled exactly as given.
-- 2 targets is a completely good, sufficient clue — it is not a lesser result. Only add a 3rd word if its link to the clue is just as strong as the other two. Never pad a 2-word clue with a weaker 3rd word merely to raise the count; a strong 2-word clue beats a padded 3-word one every time.
-- Choose clues that feel intuitive and slightly creative, not just the most statistically obvious connection. Connecting words in an indirect or cultural way — the way a person would think of them — is good.
-- Weigh the score. If your team has notably more words left than the opponent, play it safe — a smaller, high-confidence clue that guarantees progress beats a big swing you might blow. If you're notably behind, it's worth the extra risk: a clue targeting more words at once, even if less certain, gives you a chance to catch up that a safe 1-word clue doesn't.
+- Every target must be reachable from your clue in ONE obvious step. If the link only holds through a chain ("clue → X → Y → target"), a rare sense of a word, a coincidence of spelling, or an association only you would make, it is too weird — drop that target instead of building the clue around it. Your operative cannot see your reasoning, so the only link that counts is one they will find on their own.
+- If you can't state a target's link in a handful of plain words, it isn't a target.
+- Prefer clues that feel intuitive and a little creative over the most statistically obvious connection, but only where the association is one most people share (KRYPTON → SUPERMAN is fine; a link only you would make is not).
+
+HOW MANY WORDS TO CLUE
+
+There is no right number for a given point in a game. A 2 that is obvious on one board is reckless on the next, and "we're behind, so clue more words" is not a rule — it's one consideration among several. Work the count out from the position in front of you, the way a person would:
+
+- Start from the links, not from a number. Look at what your remaining words actually have in common and let the clue tell you how many words it covers. Two strong links is a 2. One strong link plus one you're talking yourself into is a 1, whatever the score says.
+- Price the mistake in THIS position. A wrong guess ends your turn on the spot, and the word it reveals is usually not yours — it moves the opponent forward while you stand still. Early that costs you a turn. Late it can cost you the game. The same risky third word is cheap in one position and unaffordable in another.
+- Compare the tempo before you commit. Work out how many turns you need at each count against how many the opponent needs. If a run of single words you're certain of gets you there first, that run IS the winning line, and a bigger clue is only a way to lose a game you had already won. If no realistic run of safe clues gets you there in time, then the safe clue is the losing move and the wider one is right even at real risk.
+- A lead is a reason to be boring. Being one or two words from winning is a reason to be boring. Being about to be closed out is a reason to gamble, because a clue that might be enough beats one that certainly isn't.
+- The count is a promise, not a score. Naming N tells your operative to keep guessing; a padded Nth word can end the turn before your good words are ever reached, or hit something far worse. Nobody is scoring you on clue size.
+- One word you are certain of is a legal, respectable answer at any point in the game, including the first turn. Three is right when three links are genuinely that strong.
+
+Say that comparison out loud on the RISK line before you commit to a count. If you can't state why this count is right for this board and this score, it's the wrong count.
 
 %s
 
+RISK: <the position in your own words: turns you need vs turns they need, what a wrong guess would cost you right now, and why your count follows from that>
 ASSASSIN: <clear, or the risk this clue runs toward the assassin word>
 CLUE: <your one-word clue>
 TARGETS: <comma-separated board words this clue covers>
 WHY: <one per target, as "word - short reason", separated by semicolons>
 NUMBER: <the count of words listed in TARGETS>
 
+RISK: must never be empty, and must be about this board. A generic sentence that would fit any position means you skipped the decision instead of making it.
+
 ASSASSIN: must never be empty — state plainly whether the clue is clear of the assassin word or explain the risk it runs.
 
 WHY: one short phrase per target saying how the clue reaches that word — a handful of words each, not a sentence. "whale - sea mammal" is right; a full explanation of your deliberation is not.
 
-Only list a word in TARGETS if you are highly confident an operative will reach it from your clue. Uncertainty means listing fewer words, never listing a word you are hoping about.
+TARGETS: only words you are highly confident an operative will reach. Uncertainty means listing fewer words, never listing a word you are hoping about.
 
-Real players don't all play the same way — some examples of the range that's normal:
+The same player gives very different clues depending on what the board and the score look like. All three of these are correct play:
 
-Example (steady, dictionary-ish link):
+Example — close to winning, so the available 2 isn't worth it:
+RISK: I need 2 more words and they need 4, so I win this by not making mistakes; two certain single words get me there before they finish. I did have a possible second target on this clue, but "ship" reads just as easily as their word SAIL, and handing them the turn now is how I lose a won game. Taking the one I'm sure of.
+ASSASSIN: clear, no relation to "shadow"
+
+CLUE: mammal
+TARGETS: whale
+WHY: whale - a sea mammal
+NUMBER: 1
+
+Example — nobody is close, and the clue honestly covers two:
+RISK: 5 words to their 6, so neither of us is near the end and a wrong guess costs me a turn rather than the game. Both of these links are ones I'd expect anyone to make, so 2 is the honest count — I have no third word that comes anywhere near this clue, and padding it would just risk the two good ones.
 ASSASSIN: clear, no relation to "shadow"
 
 CLUE: ocean
@@ -299,27 +330,20 @@ TARGETS: whale, ship
 WHY: whale - sea mammal; ship - sails the ocean
 NUMBER: 2
 
-Example (greedy, taking a 3rd word on a slightly looser link because the team is behind):
+Example — about to be closed out, so the loose third word is worth it:
+RISK: They have 1 word left and I have 4. One word a turn loses before I ever finish, so the safe clue is the losing move here — I need a turn that moves me 3. "jack" is the loosest of the three and I know it, but a clue that might get me three beats a clue that certainly isn't enough.
 ASSASSIN: clear, no relation to "spider"
 
 CLUE: royal
 TARGETS: crown, palace, jack
 WHY: crown - worn by royalty; palace - where royals live; jack - royal face card
 NUMBER: 3
-
-Example (pop-culture/idiomatic link instead of a dictionary one):
-ASSASSIN: clear, no relation to "night"
-
-CLUE: krypton
-TARGETS: superman, cape
-WHY: superman - from Krypton; cape - what he wears
-NUMBER: 2
-
 `, ai.deliberationInstructions())
 
 	prompt := fmt.Sprintf(`You are the %s team spymaster.
 
 Score: your team has %d words left to find; the opponent has %d words left.
+%s
 
 Your team's words (you want these guessed): %s
 Opponent's words (avoid these): %s
@@ -328,6 +352,7 @@ Assassin (NEVER clue toward this): %s
 
 Give your clue:`, teamName,
 		len(myWords), len(opponentWords),
+		positionBrief(len(myWords), len(opponentWords)),
 		strings.Join(myWords, ", "),
 		strings.Join(opponentWords, ", "),
 		strings.Join(bystanders, ", "),
@@ -386,6 +411,12 @@ Give your clue:`, teamName,
 
 		p, err := parseClue(reply, myWords, b.Cards)
 		if err == nil {
+			// Logged as one greppable line per accepted clue: the position
+			// the model was looking at, and the count it chose from it. The
+			// count is the model's call, so this is the only record of
+			// whether its judgement actually tracks the board.
+			log.Printf("[LLM Spymaster] team=%s my_words_left=%d opp_words_left=%d clue=%q count=%d",
+				teamName, len(myWords), len(opponentWords), p.Clue.Word, p.Clue.Count)
 			log.Print(spymasterSummary(teamName, p))
 			return p.Clue, withThinking(thinking, p.Reasoning), nil
 		}
@@ -394,10 +425,13 @@ Give your clue:`, teamName,
 		log.Printf("[LLM Spymaster] rejected attempt=%d: %v", attempt+1, err)
 
 		// Tell the model exactly what was wrong so the retry is informed
-		// rather than a re-roll of the same mistake.
+		// rather than a re-roll of the same mistake. Deliberately says
+		// nothing about how many words to clue: a correction that nudged the
+		// count would be this layer overriding the judgement it just asked
+		// the model to make.
 		messages = append(messages,
 			chatMessage{Role: "assistant", Content: reply},
-			chatMessage{Role: "user", Content: fmt.Sprintf("That reply was rejected: %v. Respond again following the exact schema: ASSASSIN, then CLUE/TARGETS/WHY/NUMBER lines where NUMBER matches the count of words in TARGETS. Your team's words are: %s", err, strings.Join(myWords, ", "))},
+			chatMessage{Role: "user", Content: fmt.Sprintf("That reply was rejected: %v. Respond again following the exact schema: RISK, ASSASSIN, then CLUE/TARGETS/WHY/NUMBER lines where NUMBER matches the count of words in TARGETS. Your team's words are: %s", err, strings.Join(myWords, ", "))},
 		)
 	}
 
@@ -446,6 +480,7 @@ type clueParse struct {
 	Clue      *codenames.Clue
 	Targets   []targetWhy
 	Assassin  string
+	Risk      string
 	Reasoning string
 }
 
@@ -458,6 +493,15 @@ func parseClueResponse(reply string, myWords []string, board []codenames.Card) (
 }
 
 func parseClue(reply string, myWords []string, board []codenames.Card) (*clueParse, error) {
+	// RISK is required for the same reason ASSASSIN is: it isn't commentary,
+	// it's the step that produces the answer. A reply without it is a count
+	// picked rather than reasoned, and the retry is worth more than the clue
+	// it would otherwise let through.
+	riskLine := strings.TrimSpace(labeledLine(reply, "RISK"))
+	if riskLine == "" {
+		return nil, errors.New("reply had no RISK: line, or it was empty; state how many turns each side needs, what a wrong guess costs here, and why your count follows from that")
+	}
+
 	assassinLine := strings.TrimSpace(labeledLine(reply, "ASSASSIN"))
 	if assassinLine == "" {
 		return nil, errors.New("reply had no ASSASSIN: line, or it was empty")
@@ -527,20 +571,33 @@ func parseClue(reply string, myWords []string, board []codenames.Card) (*cluePar
 	// rather than burn a retry on cosmetics.
 	whys := parseWhyLine(labeledLine(reply, "WHY"), targets)
 
+	return &clueParse{
+		Clue:      &codenames.Clue{Word: word, Count: len(targets)},
+		Targets:   whys,
+		Assassin:  assassinLine,
+		Risk:      riskLine,
+		Reasoning: buildReasoning(riskLine, assassinLine, whys),
+	}, nil
+}
+
+// buildReasoning renders the human-readable explanation stored in
+// logs/ai_reasoning.jsonl and shown in the admin UI. The position read leads
+// it, so a game can be audited on the question that matters: whether the
+// count the model chose actually followed from the board it described.
+func buildReasoning(riskLine, assassinLine string, whys []targetWhy) string {
+	words := make([]string, 0, len(whys))
+	for _, t := range whys {
+		words = append(words, t.Word)
+	}
+
 	var b strings.Builder
-	fmt.Fprintf(&b, "Assassin check: %s\n\nTargets: %s", assassinLine, strings.Join(targets, ", "))
+	fmt.Fprintf(&b, "Position read: %s\n\nAssassin check: %s\n\nTargets: %s", riskLine, assassinLine, strings.Join(words, ", "))
 	for _, t := range whys {
 		if t.Why != "" {
 			fmt.Fprintf(&b, "\n  - %s: %s", t.Word, t.Why)
 		}
 	}
-
-	return &clueParse{
-		Clue:      &codenames.Clue{Word: word, Count: len(targets)},
-		Targets:   whys,
-		Assassin:  assassinLine,
-		Reasoning: b.String(),
-	}, nil
+	return b.String()
 }
 
 // parseWhyLine matches the spymaster's "word - reason; word - reason" WHY line
@@ -602,7 +659,7 @@ type GuessDecisionConfig struct {
 }
 
 var DefaultGuessDecisionConfig = GuessDecisionConfig{
-	MandatedThreshold:   0.55,
+	MandatedThreshold:   0.65,
 	BonusThreshold:      0.80,
 	RiskiestWordPenalty: 0.15,
 	// Caps discount link types the model tends to be overconfident about,
@@ -721,10 +778,17 @@ Your job is NOT to pick a word. Your job is to report what you actually believe,
 
 Return the 3 strongest candidates, ranked. For each, classify how the clue connects to it, and give your own honest confidence (0.0 = no real basis, 1.0 = certain) for how sure you are the clue means that word:
 
-  direct     A direct synonym, category member, or definitional link.
-  category   A real but broader kind-of/type-of relationship — not a synonym, but a genuine category link.
-  idiom      The link only exists through a specific fixed phrase, pun, or figure of speech.
-  multi_hop  The link only holds after two or more separate associative steps.
+direct		A synonym, near-synonym, defining property, or extremely immediate one-step association.
+			Do NOT use this label merely because the word belongs to a category named by the clue.
+			The clue and candidate should connect directly without reasoning through a broader class.
+			Example: Clue: CANINE → DOG is direct.
+
+category	The candidate is a member, type, example, or instance of the category named by the clue,
+			or the clue names a category that contains the candidate.
+			Example: Clue: MAMMAL → BAT, DOG, and MOLE are category links because they are members of the category MAMMAL.
+
+idiom   	The link only exists through a specific fixed phrase, pun, or figure of speech.
+multi_hop 	The link only holds after two or more separate associative steps.
 
 The clue is the CLUE WORD line and nothing else. NUMBER OF TARGET WORDS is how many of your team's words the spymaster says that one word points to — it is a count, never part of the clue's meaning. A clue word of "power" with a count of 2 means "two of your words relate to POWER"; it does not mean "power of two".
 
@@ -736,7 +800,7 @@ Calibration rules:
 
 Then, separately: look at every unrevealed word on the board and name the single one you would most expect the spymaster to be avoiding, given how dangerous a wrong hit would be. State whether any of your three candidates is that word.
 
-Real players don't only reach for the dictionary meaning — a clue like "krypton" might bring "superman" to mind through the movies long before "element" does. That's a legitimate idiom/multi_hop candidate, not a stretch, as long as your confidence for it honestly reflects that it's a looser link than a direct synonym would be.
+Real players don't only reach for the dictionary meaning, a clue like "krypton" might bring "superman" to mind through the movies long before "element" does. That's a legitimate idiom/multi_hop candidate, not a stretch, as long as your confidence for it honestly reflects that it's a looser link than a direct synonym would be.
 
 %s
 
