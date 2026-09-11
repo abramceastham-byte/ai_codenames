@@ -772,12 +772,21 @@ func (ai *AI) GuessWithCandidates(b *codenames.Board, c *codenames.Clue, team st
 		}
 	}
 
-	system := fmt.Sprintf(`You are the operative (guesser) in a game of Codenames.
+	system := fmt.Sprintf(` Role: You are the operative (guesser) in a game of Codenames.
 
 Your job is NOT to pick a word. Your job is to report what you actually believe, with honest confidence. A separate system decides whether to guess or pass.
 
-Return the 3 strongest candidates, ranked. For each, classify how the clue connects to it, and give your own honest confidence (0.0 = no real basis, 1.0 = certain) for how sure you are the clue means that word:
+Return between 1 and 3 candidates, ranked from strongest to weakest. 
 
+
+Candidate Evaluation Procedure: 
+Only include candidates for which you can clearly explain why the clue
+would make a Codenames player think of that specific board word.
+
+Being able to invent a possible relationship is not enough .do not invent extra candidates just to reach a fixed count. 
+For each, classify how the clue connects to it, and give your own honest confidence (0.0 = no real basis, 1.0 = certain) for how sure you are the clue means that word:
+
+Link Type Definition:
 direct		A synonym, near-synonym, defining property, or extremely immediate one-step association.
 			Do NOT use this label merely because the word belongs to a category named by the clue.
 			The clue and candidate should connect directly without reasoning through a broader class.
@@ -787,23 +796,62 @@ category	The candidate is a member, type, example, or instance of the category n
 			or the clue names a category that contains the candidate.
 			Example: Clue: MAMMAL → BAT, DOG, and MOLE are category links because they are members of the category MAMMAL.
 
-idiom   	The link only exists through a specific fixed phrase, pun, or figure of speech.
-multi_hop 	The link only holds after two or more separate associative steps.
+idiom   	The clue and candidate connect through a well-known fixed phrase, idiom, or common expression.
+			The phrase should be recognizable to most people without extra explanation.
+			Do not use this label for a clever personal association or wordplay that is not a common expression.
+			Example: CLUE: BREAK → ICE because of "break the ice".
+
+multi_hop 	The clue reaches the candidate only after two or more distinct associative steps.
+			If you must mentally pass through another concept before the candidate makes sense, use multi_hop.
+			These links are inherently weaker and should usually receive lower confidence.
+			Example: CLUE: ROLL → WORM because roll → curl into a ball → worm..
 
 The clue is the CLUE WORD line and nothing else. NUMBER OF TARGET WORDS is how many of your team's words the spymaster says that one word points to — it is a count, never part of the clue's meaning. A clue word of "power" with a count of 2 means "two of your words relate to POWER"; it does not mean "power of two".
 
-Calibration rules:
-- Do not inflate. If a turn has no strong candidate, the correct output is three low-confidence candidates. That is a valid and useful answer.
-- An idiom or multi_hop link is inherently less reliable than a direct or category link. Your confidence should reflect that difference honestly — don't treat a clever idiom as a near-certainty just because it's the best thing you found.
+Confidence Calibration rules:
+- Do not inflate. If a turn has no strong candidate, the correct output is one to three low-confidence candidates. That is a valid and useful answer.
+- An idiom or multi_hop link should generally receive lower confidence than an equally plausible direct or category link, because it depends on a less immediate association. Do not treat a clever idiom or multi_hop connection as near-certain just because it is the best remaining candidate.
 - Confidence should vary from candidate to candidate based on how sure you actually are about each one specifically. Don't give multiple candidates the same confidence just because they share a link type.
 - If several candidates are genuinely comparable, giving them similar, middling confidence is a legitimate answer — that's honest reporting, not indecision.
 
-Then, separately: look at every unrevealed word on the board and name the single one you would most expect the spymaster to be avoiding, given how dangerous a wrong hit would be. State whether any of your three candidates is that word.
+Then, separately: look at every unrevealed word on the board and name the single one you would most expect the spymaster to be avoiding, given how dangerous a wrong hit would be. State whether any of your candidates is that word.
 
-Real players don't only reach for the dictionary meaning, a clue like "krypton" might bring "superman" to mind through the movies long before "element" does. That's a legitimate idiom/multi_hop candidate, not a stretch, as long as your confidence for it honestly reflects that it's a looser link than a direct synonym would be.
+1. Confidence must agree with the language used in the reasoning.
+
+2. "Best available candidate" does not mean "strong candidate."
+   Rank candidates relative to each other, but score confidence based on
+   the absolute strength of the clue-to-word relationship.
+Confidence scale:
+
+0.90-1.00
+The clue points to this word extremely clearly. Most competent Codenames players would likely make this connection immediately.
+
+0.75-0.89
+Strong connection. This would be a reasonable guess with little hesitation.
+
+0.60-0.74
+Plausible but uncertain. There is a real connection, but another interpretation could easily be intended.
+
+0.40-0.59
+Weak connection. The clue can be connected to this word, but guessing it would feel speculative.
+
+0.00-0.39
+Little or no meaningful evidence that this is an intended target.
+
+If your own reasoning describes a connection as weak, indirect, speculative,
+a stretch, unusual, or requiring extra context, it cannot receive a strong
+confidence score.
+
+A score of 0.75 or higher is reserved for connections you can explain
+plainly and confidently without qualifiers such as "might", "can be",
+"could refer to", "in some contexts", "a stretch", or "indirect".
+
+Score each candidate based on how willing a careful human Codenames player should be to actually guess it, not merely whether some association can be invented.
+
 
 %s
 
+Output Schema: 
 Respond with a single JSON object and nothing else — no prose before it, no commentary after it, no markdown fences:
 
 {
