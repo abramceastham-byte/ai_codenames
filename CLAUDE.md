@@ -7,7 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Codenames is a full-stack implementation of the Codenames board game with:
 - **Go backend** (game server + AI server)
 - **Svelte 5 frontend** (SvelteKit, Tailwind CSS v4)
-- **Word2Vec-based AI** players using GloVe and ConceptNet models
+
+## Objective
+- This is a turing test for the codenames board game. The main goal is to create a human like LLM player for use against real human players.
 
 ## Dev Commands
 
@@ -42,23 +44,28 @@ AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenam
 
 # Terminal 2 — frontend (port 5173)
 cd frontend && pnpm run dev
-
-# Terminal 3 — AI server (port 8081, requires model files; run
-# `scripts/setup_models.sh` once to fetch them if data/glove.bin and
-# data/conceptnet.bin don't exist yet — requires python3)
-GLOVE_MODEL_PATH=data/glove.bin \
-CONCEPT_NET_MODEL_PATH=data/conceptnet.bin \
-COMMON_WORDLIST=data/common_words_filtered.txt \
-AUTH_SECRET=abc123 \
-WEB_SERVER_ENDPOINT=http://localhost:8080 \
-ENABLED_BACKENDS=w2v,llm \
-DEFAULT_BACKEND=w2v \
-OLLAMA_ENDPOINT=http://localhost:11434 \
-OLLAMA_MODEL=llama3 \
-go run ./cmd/ai-server/
 ```
 
-Then open `http://localhost:5173`. The `llm` backend requires [Ollama](https://ollama.com) running with the model pulled (e.g. `ollama pull llama3`); drop `llm` from `ENABLED_BACKENDS` if you only want the w2v player.
+```bash
+# Terminal 3 — AI server, qwen3 with thinking disabled (faster, less deliberate)
+AUTH_SECRET=abc123 \
+WEB_SERVER_ENDPOINT=http://localhost:8080 \
+ENABLED_BACKENDS=llm \
+DEFAULT_BACKEND=llm \
+OLLAMA_ENDPOINT=http://localhost:11434 \
+go run ./cmd/ai-server/ --ollama_think=false
+```
+
+
+Then open `http://localhost:5173`. The `llm` backend requires [Ollama](https://ollama.com) running with the model pulled (`ollama pull qwen3:30b-a3b` — a ~18GB download); drop `llm` from `ENABLED_BACKENDS` if you only want the w2v player.
+
+`qwen3:30b-a3b` is the default model (`--ollama_model`, `OLLAMA_MODEL`). It's a 30B mixture-of-experts with ~3B active parameters, so it's much faster per token than a dense reasoning model of comparable quality, and its reasoning can be toggled — which is what `--ollama_think=false` in the Terminal 3 command does. With thinking off, responses come back in seconds instead of minutes, at the cost of some deliberation quality; drop the flag (or pass `--ollama_think=true`) when you want the more careful player.
+
+The flag does more than set Ollama's `think` field: `llm/llm.go` swaps in different prompt text depending on it. With thinking enabled the model is told to deliberate inside `<think>` and emit only the schema afterwards; with it disabled the model is told it has no scratch space and must reply with the schema alone. Either way, whatever deliberation the model does produce — inline `<think>...</think>` markup or Ollama's separate `thinking` field — is pulled out before the final answer is parsed and folded into the reasoning logged to `logs/ai_reasoning.jsonl` (visible via `/admin/{gameId}`) instead of being discarded.
+
+The timeouts still carry qwq-era headroom: `llm.DefaultTimeout` (3 minutes) and the per-guess budget (half that) in `llm/llm.go` were sized for `qwq:32b`, a pure reasoning model that can't disable its `<think>` block and so always pays the full thinking cost. They're generous for qwen3 with thinking off. Swapping back to qwq is `OLLAMA_MODEL=qwq:32b` with `--ollama_think` left unset.
+
+`--ollama_think` (`true`/`false`, unset by default) sets Ollama's top-level `think` field. Leaving it unset sends nothing and lets the model use its own default — the right choice for a model with no toggle. Other tunables: `--ollama_max_tokens` (num_predict budget, thinking + answer), `--ollama_timeout`, `--ollama_temperature`, `--ollama_seed` (fixes sampling for reproducible research runs).
 
 ### Running Locally (Docker Compose)
 
@@ -111,7 +118,7 @@ SvelteKit is configured as a fully static SPA (`adapter-static`, `fallback: '200
 | `ENABLED_BACKENDS` | AI server | Comma-separated backends to load (`w2v`, `llm`) |
 | `DEFAULT_BACKEND` | AI server | Backend used when caller doesn't specify |
 | `OLLAMA_ENDPOINT` | AI server | Ollama URL for the `llm` backend (default `http://localhost:11434`) |
-| `OLLAMA_MODEL` | AI server | Ollama model name for the `llm` backend (default `llama3`) |
+| `OLLAMA_MODEL` | AI server | Ollama model name for the `llm` backend (default `qwen3:30b-a3b`) |
 
 The web server also accepts `--addr` (default `:8080`), `--db_path` (default `codenames.db`), `--clue_delay` (default `60s`, `0` to disable), and `--hash_key_path`/`--block_key_path` for secure cookie keys (auto-generated if missing).
 

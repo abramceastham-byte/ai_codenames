@@ -15,7 +15,7 @@ Pretty much everything is written in Go, with the frontend in Svelte 5 + TypeScr
 
 ## Running Locally
 
-Make sure you have a recent version of Go + TypeScript installed. If you want to use the LLM player, also install [Ollama](https://ollama.com) and pull a model (e.g. `ollama pull llama3`). Then:
+Make sure you have a recent version of Go + TypeScript installed. If you want to use the LLM player, also install [Ollama](https://ollama.com) and pull the default model (`ollama pull qwen3:30b-a3b` — a ~18GB download). Then:
 
 ```bash
 # Run the backend web server
@@ -42,11 +42,16 @@ WEB_SERVER_ENDPOINT=http://localhost:8080 \
 ENABLED_BACKENDS=w2v,llm \
 DEFAULT_BACKEND=w2v \
 OLLAMA_ENDPOINT=http://localhost:11434 \
-OLLAMA_MODEL=llama3 \
-go run ./cmd/ai-server/
+go run ./cmd/ai-server/ --ollama_think=false
 ```
 
 From here, you can open a web browser to `http://localhost:5173` to start a game.
+
+### Choosing an LLM
+
+`qwen3:30b-a3b` is the default model (`--ollama_model` / `OLLAMA_MODEL`). It's a mixture-of-experts model (~3B active parameters out of 30B), so it's considerably faster than a dense model of similar quality, and its reasoning can be turned off — that's what `--ollama_think=false` above does. With thinking off, clues and guesses come back in seconds rather than minutes; drop the flag (or pass `--ollama_think=true`) for a slower, more deliberate player. The prompts in `./llm/llm.go` adapt to the setting, and whatever reasoning the model does produce is logged to `logs/ai_reasoning.jsonl` either way.
+
+To use a different model, set `OLLAMA_MODEL` (or `--ollama_model`). Leave `--ollama_think` off entirely for a pure reasoning model like `qwq:32b`, which has no thinking toggle to set. Other tunables: `--ollama_max_tokens`, `--ollama_timeout`, `--ollama_temperature`, and `--ollama_seed` (fix the seed to make replies to identical prompts reproducible for research runs).
 
 ### Running Locally via Docker Compose
 
@@ -71,7 +76,7 @@ The AI server supports two backends, configured via `ENABLED_BACKENDS` (comma-se
 | Backend | Description | Required env vars |
 |---|---|---|
 | `w2v` | Algorithmic player using GloVe + ConceptNet word embeddings | `GLOVE_MODEL_PATH`, `CONCEPT_NET_MODEL_PATH`, `COMMON_WORDLIST` |
-| `llm` | Large language model player via Ollama | `OLLAMA_ENDPOINT` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `llama3`) |
+| `llm` | Large language model player via Ollama | `OLLAMA_ENDPOINT` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `qwen3:30b-a3b`) |
 
 `DEFAULT_BACKEND` selects which one is used when a caller doesn't specify (defaults to the first enabled backend, alphabetically). You can also enable just one — e.g. `ENABLED_BACKENDS=llm` skips loading the w2v models entirely.
 

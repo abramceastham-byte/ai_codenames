@@ -175,11 +175,11 @@ func (s *Srv) initMux() *mux.Router {
 			method:      http.MethodPost,
 			handlerFunc: s.requireGameAuth(s.serveRequestAI, isGameCreator(), isGamePending()),
 		},
-		// Remove a player (typically a misplaced AI) from a pending game.
+		// Remove a player (typically a misplaced AI, or a self-removal) from a pending game.
 		{
 			path:        "/api/game/{id}/removePlayer",
 			method:      http.MethodPost,
-			handlerFunc: s.requireGameAuth(s.serveRemovePlayer, isGameCreator(), isGamePending()),
+			handlerFunc: s.requireGameAuth(s.serveRemovePlayer, isGamePending()),
 		},
 		// Join game.
 		{
@@ -632,6 +632,15 @@ func (s *Srv) serveRemovePlayer(w http.ResponseWriter, r *http.Request, p *coden
 		return httperr.
 			BadRequest("player %q isn't in game %q", req.PlayerID, game.ID).
 			WithMessage("that player isn't in this game")
+	}
+
+	// Anyone can remove themselves; removing someone else requires being the
+	// creator, who drives the lobby.
+	isCreator := string(game.CreatedBy) == p.ID.ID
+	if !target.PlayerID.SameID(p.ID.ID) && !isCreator {
+		return httperr.
+			Forbidden("player %q tried to remove player %q from game %q", p.ID, req.PlayerID, game.ID).
+			WithMessage("only the game creator can remove other players")
 	}
 
 	// The creator drives the lobby, and several handlers assume they're around,

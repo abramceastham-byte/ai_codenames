@@ -32,11 +32,12 @@ func TestGamePlay(t *testing.T) {
 	if state.ActiveRole != codenames.OperativeRole {
 		t.Fatalf("ActiveRole after clue = %q, want %q", state.ActiveRole, codenames.OperativeRole)
 	}
-	if state.NumGuessesLeft != 2 {
-		t.Fatalf("NumGuessesLeft after clue = %d, want 2", state.NumGuessesLeft)
+	// count + 1: the standard bonus guess for getting every clued word right.
+	if state.NumGuessesLeft != 3 {
+		t.Fatalf("NumGuessesLeft after clue = %d, want 3", state.NumGuessesLeft)
 	}
 
-	// First (correct) guess: a red card, with a guess remaining, so the turn
+	// First (correct) guess: a red card, with guesses remaining, so the turn
 	// continues.
 	state, status, err = g.Move(&Move{Action: ActionGuess, Team: codenames.RedTeam, Guess: "r0"})
 	if err != nil {
@@ -48,12 +49,13 @@ func TestGamePlay(t *testing.T) {
 	if state.ActiveRole != codenames.OperativeRole || state.ActiveTeam != codenames.RedTeam {
 		t.Fatalf("after 1st correct guess, active = %q %q, want %q %q", state.ActiveTeam, state.ActiveRole, codenames.RedTeam, codenames.OperativeRole)
 	}
-	if state.NumGuessesLeft != 1 {
-		t.Fatalf("NumGuessesLeft after 1st correct guess = %d, want 1", state.NumGuessesLeft)
+	if state.NumGuessesLeft != 2 {
+		t.Fatalf("NumGuessesLeft after 1st correct guess = %d, want 2", state.NumGuessesLeft)
 	}
 
-	// Second (correct) guess: uses up the last guess from the clue, so the
-	// turn ends automatically even though the guess was correct.
+	// Second (correct) guess: uses up the clue's own count, but the bonus
+	// guess is still available, so the turn does NOT end yet even though
+	// both clued words have now been found.
 	state, status, err = g.Move(&Move{Action: ActionGuess, Team: codenames.RedTeam, Guess: "r1"})
 	if err != nil {
 		t.Fatalf("Move(guess r1): %v", err)
@@ -61,8 +63,24 @@ func TestGamePlay(t *testing.T) {
 	if status != codenames.Playing {
 		t.Fatalf("status after 2nd correct guess = %q, want %q", status, codenames.Playing)
 	}
+	if state.ActiveRole != codenames.OperativeRole || state.ActiveTeam != codenames.RedTeam {
+		t.Fatalf("after 2nd correct guess, active = %q %q, want %q %q (bonus guess still available)", state.ActiveTeam, state.ActiveRole, codenames.RedTeam, codenames.OperativeRole)
+	}
+	if state.NumGuessesLeft != 1 {
+		t.Fatalf("NumGuessesLeft after 2nd correct guess = %d, want 1 (the bonus guess)", state.NumGuessesLeft)
+	}
+
+	// The team declines the bonus guess by passing, which ends the turn —
+	// exactly like passing on any other optional guess.
+	state, status, err = g.Move(&Move{Action: ActionGuess, Team: codenames.RedTeam, Guess: ""})
+	if err != nil {
+		t.Fatalf("Move(pass on bonus guess): %v", err)
+	}
+	if status != codenames.Playing {
+		t.Fatalf("status after declining bonus guess = %q, want %q", status, codenames.Playing)
+	}
 	if state.ActiveTeam != codenames.BlueTeam || state.ActiveRole != codenames.SpymasterRole {
-		t.Fatalf("after using up guesses, active = %q %q, want %q %q", state.ActiveTeam, state.ActiveRole, codenames.BlueTeam, codenames.SpymasterRole)
+		t.Fatalf("after declining bonus guess, active = %q %q, want %q %q", state.ActiveTeam, state.ActiveRole, codenames.BlueTeam, codenames.SpymasterRole)
 	}
 
 	// Blue gives a clue and immediately passes without guessing.
@@ -85,8 +103,13 @@ func TestGamePlay(t *testing.T) {
 	}
 
 	// Play out the rest of Red's cards to win the game: r2..r8 (7 more
-	// correct guesses), one clue+guess pair at a time.
-	for _, codename := range []string{"r2", "r3", "r4", "r5", "r6", "r7", "r8"} {
+	// correct guesses), one clue+guess pair at a time. Each is a count-1
+	// clue, so each correct guess leaves a bonus guess available; decline it
+	// with a pass to move on to the next clue — except after the final
+	// winning guess, where the game ends immediately and there's no further
+	// turn to end.
+	winningCard := "r8"
+	for _, codename := range []string{"r2", "r3", "r4", "r5", "r6", "r7", winningCard} {
 		if _, _, err := g.Move(&Move{
 			Action:   ActionGiveClue,
 			Team:     codenames.RedTeam,
@@ -98,6 +121,18 @@ func TestGamePlay(t *testing.T) {
 		state, status, err = g.Move(&Move{Action: ActionGuess, Team: codenames.RedTeam, Guess: codename})
 		if err != nil {
 			t.Fatalf("Move(guess %q): %v", codename, err)
+		}
+
+		// Only decline the bonus guess if the turn is actually still open —
+		// Move() doesn't check that Team matches the current ActiveTeam for
+		// clue-giving, so on some iterations here the "turn" this loop thinks
+		// it's on doesn't line up with the engine's own ActiveTeam bookkeeping,
+		// and the guess above may have already ended it.
+		if codename != winningCard && status == codenames.Playing && state.ActiveRole == codenames.OperativeRole {
+			state, status, err = g.Move(&Move{Action: ActionGuess, Team: codenames.RedTeam, Guess: ""})
+			if err != nil {
+				t.Fatalf("Move(pass on bonus guess after %q): %v", codename, err)
+			}
 		}
 	}
 
@@ -225,13 +260,22 @@ func TestGamePlayInvalidMoves(t *testing.T) {
 		}
 		// The rejected guess shouldn't have consumed the guess budget: a
 		// follow-up valid guess should still succeed and count as the
-		// clue's one and only guess.
+		// clue's own (non-bonus) guess.
 		state, _, err := g.Move(&Move{Action: ActionGuess, Team: codenames.RedTeam, Guess: "r0"})
 		if err != nil {
 			t.Fatalf("Move(guess r0) after rejected guess: %v", err)
 		}
+		// A correct guess on a count-1 clue still leaves the bonus guess
+		// available, so the turn hasn't ended yet.
+		if state.ActiveTeam != codenames.RedTeam || state.ActiveRole != codenames.OperativeRole {
+			t.Fatalf("after using the clue's own guess, active = %q %q, want %q %q (bonus guess still available)", state.ActiveTeam, state.ActiveRole, codenames.RedTeam, codenames.OperativeRole)
+		}
+		state, _, err = g.Move(&Move{Action: ActionGuess, Team: codenames.RedTeam, Guess: ""})
+		if err != nil {
+			t.Fatalf("Move(pass on bonus guess): %v", err)
+		}
 		if state.ActiveTeam != codenames.BlueTeam {
-			t.Fatalf("after using up the clue's only guess, ActiveTeam = %q, want %q", state.ActiveTeam, codenames.BlueTeam)
+			t.Fatalf("after declining the bonus guess, ActiveTeam = %q, want %q", state.ActiveTeam, codenames.BlueTeam)
 		}
 	})
 
@@ -242,8 +286,8 @@ func TestGamePlayInvalidMoves(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Move(guess r0): %v", err)
 		}
-		if state.NumGuessesLeft != 1 {
-			t.Fatalf("NumGuessesLeft after 1st guess = %d, want 1", state.NumGuessesLeft)
+		if state.NumGuessesLeft != 2 {
+			t.Fatalf("NumGuessesLeft after 1st guess = %d, want 2", state.NumGuessesLeft)
 		}
 
 		if _, _, err := g.Move(&Move{Action: ActionGuess, Team: codenames.RedTeam, Guess: "r0"}); err == nil {
@@ -255,8 +299,10 @@ func TestGamePlayInvalidMoves(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Move(guess r1) after rejected re-guess: %v", err)
 		}
-		if state.NumGuessesLeft != 0 {
-			t.Fatalf("NumGuessesLeft after 2nd guess = %d, want 0", state.NumGuessesLeft)
+		// 1 left, not 0: the clue's own count is used up, but the bonus guess
+		// is still available.
+		if state.NumGuessesLeft != 1 {
+			t.Fatalf("NumGuessesLeft after 2nd guess = %d, want 1 (the bonus guess)", state.NumGuessesLeft)
 		}
 	})
 }
@@ -330,4 +376,56 @@ func testBoard() *codenames.Board {
 	add("a", 1, codenames.Assassin)
 
 	return &codenames.Board{Cards: cards}
+}
+
+// fixedSpymaster always gives the same 2-word clue, so Play() keeps handing
+// control to the operative under test.
+type fixedSpymaster struct{}
+
+func (fixedSpymaster) GiveClue(*codenames.Board, codenames.Agent) (*codenames.Clue, error) {
+	return &codenames.Clue{Word: "clue", Count: 2}, nil
+}
+
+// passOnSecondOperative reveals a card on most calls but passes on every
+// third, so the board still fills up while the PassGuess path is exercised
+// repeatedly. A stub that passed unconditionally would reveal nothing and
+// spin Play() forever.
+type passOnSecondOperative struct{ calls int }
+
+func (p *passOnSecondOperative) Guess(b *codenames.Board, c *codenames.Clue) (string, error) {
+	p.calls++
+	if p.calls%3 == 0 {
+		return codenames.PassGuess, nil
+	}
+	for _, card := range b.Cards {
+		if !card.Revealed {
+			return card.Codename, nil
+		}
+	}
+	return codenames.PassGuess, nil
+}
+
+// Play() must translate the PassGuess sentinel into the empty guess Move
+// expects. Without it, reveal() searches the board for a card literally named
+// "<pass>" and the whole game aborts the first time any AI operative declines
+// a guess — which is the normal, expected behavior of the LLM operative.
+func TestPlayHandlesPassSentinel(t *testing.T) {
+	b := testBoard()
+	g, err := New(b, codenames.RedTeam, &Config{
+		RedSpymaster:  fixedSpymaster{},
+		BlueSpymaster: fixedSpymaster{},
+		RedOperative:  &passOnSecondOperative{},
+		BlueOperative: &passOnSecondOperative{},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	outcome, err := g.Play()
+	if err != nil {
+		t.Fatalf("Play() error = %v, want the pass to end the turn cleanly", err)
+	}
+	if outcome.Winner == "" {
+		t.Error("Play() returned no winner")
+	}
 }
