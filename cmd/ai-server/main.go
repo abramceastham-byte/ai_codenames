@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/bcspragu/Codenames/cryptorand"
 	"github.com/bcspragu/Codenames/llm"
@@ -23,9 +25,29 @@ import (
 )
 
 func main() {
+	// Handled separately from run()'s flag set since it's meant to be cheap
+	// and not depend on any of the server's own config - used as a Docker
+	// HEALTHCHECK for the scratch-based image, which has no shell/curl/wget
+	// to do this the usual way.
+	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
+		if err := healthcheck(); err != nil {
+			log.Println(err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(os.Args); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func healthcheck() error {
+	conn, err := net.DialTimeout("tcp", "localhost:8081", 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("healthcheck failed: %w", err)
+	}
+	return conn.Close()
 }
 
 func run(args []string) error {

@@ -44,5 +44,10 @@ COPY --from=builder /aiserver /aiserver
 # Expose the port the app runs on
 EXPOSE 8081
 
+# Model loading (GloVe + ConceptNet) can take a minute or more before the
+# server starts accepting connections, so give this a long retry budget.
+HEALTHCHECK --interval=5s --timeout=2s --retries=40 \
+  CMD ["/aiserver", "--healthcheck"]
+
 # Run the binary
 ENTRYPOINT ["/aiserver"]
