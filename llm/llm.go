@@ -273,7 +273,7 @@ func (ai *AI) giveClue(b *codenames.Board, agent codenames.Agent) (*codenames.Cl
 Rules:
 - Your clue must be a SINGLE word (no spaces, no hyphens, no proper nouns).
 - Your clue can NEVER be a word that appears anywhere on the board, in any form, including as a substring. If "king" is on the board, then "king", "kings" and "kingdom" are all rejected — say "monarch" instead. If "ship" is on the board, then "shipping" and "worship" are rejected too, even though "ship" isn't a prefix in "worship" — say "vessel" or "devoted" instead. This applies to every word listed below, including your own team's words: naming a board word as the clue is an illegal move, not a shortcut.
-- You MUST avoid clues that relate to the assassin word — guessing it loses the game instantly.
+- You MUST avoid clues that relate in any way, whether categorically or directly,  to the assassin word, guessing it loses the game instantly.
 - You should avoid clues that relate to opponent words or bystanders.
 - Every word you list as a target must be one of YOUR team's words, spelled exactly as given.
 - Every target must be reachable from your clue in ONE obvious step. If the link only holds through a chain ("clue → X → Y → target"), a rare sense of a word, a coincidence of spelling, or an association only you would make, it is too weird — drop that target instead of building the clue around it. Your operative cannot see your reasoning, so the only link that counts is one they will find on their own.
@@ -282,7 +282,7 @@ Rules:
 
 HOW MANY WORDS TO CLUE
 
-There is no right number for a given point in a game. A 2 that is obvious on one board is reckless on the next, and "we're behind, so clue more words" is not a rule — it's one consideration among several. Work the count out from the position in front of you, the way a person would:
+There is no right number for a given point in a game. A 2 that is obvious on one board is reckless on the next, and "we're behind, so clue more words" is not a rule, it's one consideration among several. Work the count out from the position in front of you, the way a person would:
 
 - Start from the links, not from a number. Look at what your remaining words actually have in common and let the clue tell you how many words it covers. Two strong links is a 2. One strong link plus one you're talking yourself into is a 1, whatever the score says.
 - Price the mistake in THIS position. A wrong guess ends your turn on the spot, and the word it reveals is usually not yours — it moves the opponent forward while you stand still. Early that costs you a turn. Late it can cost you the game. The same risky third word is cheap in one position and unaffordable in another.
@@ -293,6 +293,16 @@ There is no right number for a given point in a game. A 2 that is obvious on one
 
 Say that comparison out loud on the RISK line before you commit to a count. If you can't state why this count is right for this board and this score, it's the wrong count.
 
+Before accepting a clue, evaluate each intended target:
+
+1. Is the clue-to-target relationship natural and distinctive?
+2. Is it defining, conventional, or immediately recognizable?
+3. Would the clue apply just as easily to many unrelated board words?
+4. Does the relationship depend on a generic property, invented scenario, rare trivia, or loose adjective compatibility?
+5. Is there any opponent, bystander, or assassin word with an equal or stronger association to the clue?
+
+Reject the clue if any intended target is only weakly connected,
+or if a dangerous non-target is more strongly associated than one of the targets.
 %s
 
 RISK: <the position in your own words: turns you need vs turns they need, what a wrong guess would cost you right now, and why your count follows from that>
@@ -780,17 +790,57 @@ Return between 1 and 3 candidates, ranked from strongest to weakest.
 
 
 Candidate Evaluation Procedure: 
-Only include candidates for which you can clearly explain why the clue
-would make a Codenames player think of that specific board word.
 
-Being able to invent a possible relationship is not enough .do not invent extra candidates just to reach a fixed count. 
+Before ranking candidates, evaluate each plausible board word by asking:
+
+1. What is the actual relationship from the clue to this specific word?
+2. Is that relationship immediate, categorical, idiomatic, or multi-hop?
+3. How specific is the relationship? Is it intrinsic or conventionally associated with this word,
+   or merely something that could be true in a particular situation? Would this clue naturally make a Codenames player think of this word?
+4. Am I explaining a real association, or inventing a story after choosing the word?
+5. Compare the candidate against the other plausible board words before assigning confidence.
+
+Only after this comparison should you rank candidates and assign confidence.
+
 For each, classify how the clue connects to it, and give your own honest confidence (0.0 = no real basis, 1.0 = certain) for how sure you are the clue means that word:
 
+
 Link Type Definition:
-direct		A synonym, near-synonym, defining property, or extremely immediate one-step association.
+
+
+Only include a candidate when the clue has a natural and distinctive
+relationship to that specific board word.
+
+Before accepting a candidate, apply these tests:
+
+1. Natural association test:
+   Would the clue itself plausibly make a careful Codenames player think
+   of this word, without first trying to justify the word?
+
+2. Specificity test:
+   Is the relationship meaningfully more specific to this candidate than
+   to many unrelated words?
+   Generic properties such as "can contain", "can be near", "can be old",
+   "can have a top", "can float on", or "can be associated with" are weak
+   unless the connection is especially conventional or distinctive.
+
+3. Explanation test:
+   Reject or give low confidence to a candidate if the explanation requires
+   inventing a scenario, relying on rare trivia, adding unstated context,
+   or saying only that the two concepts could somehow occur together.
+
+4. Reverse-justification test:
+   Do not choose a word first and then search for a story connecting it
+   to the clue. The relationship should be apparent from the clue itself.
+
+Semantic specificity rules:
 			Do NOT use this label merely because the word belongs to a category named by the clue.
 			The clue and candidate should connect directly without reasoning through a broader class.
 			Example: Clue: CANINE → DOG is direct.
+Being able to construct a possible relationship is not enough.
+Do not add extra candidates merely to fill the list.
+
+direct		A synonym, near-synonym, defining property, or extremely immediate one-step association.
 
 category	The candidate is a member, type, example, or instance of the category named by the clue,
 			or the clue names a category that contains the candidate.
@@ -821,6 +871,7 @@ Then, separately: look at every unrevealed word on the board and name the single
 2. "Best available candidate" does not mean "strong candidate."
    Rank candidates relative to each other, but score confidence based on
    the absolute strength of the clue-to-word relationship.
+
 Confidence scale:
 
 0.90-1.00
@@ -848,7 +899,39 @@ plainly and confidently without qualifiers such as "might", "can be",
 
 Score each candidate based on how willing a careful human Codenames player should be to actually guess it, not merely whether some association can be invented.
 
+Reject a candidate entirely if the relationship depends mainly on:
+- a generic physical property,
+- an invented phrase,
+- an uncommon contextual scenario,
+- something the candidate merely can have/do/be near,
+- or a relationship that would apply equally well to many unrelated board words.
 
+If the clue-to-word relationship is not conventional, distinctive, or defining, do not include the candidate.
+
+---------------------------------------------
+Final consistency check:
+---------------------------------------------
+Before producing the JSON response:
+
+1. Every candidate in the final candidate list MUST be a word you evaluated
+   during the candidate evaluation procedure.
+
+2. Do not introduce a new candidate in the final answer that was not part
+   of your comparison.
+
+3. The ranking in the final output MUST match your evaluation:
+   the word you judged to have the strongest natural clue-to-word relationship
+   must be ranked first.
+
+4. If your evaluation identifies one word as clearly stronger than another,
+   do not reverse their order in the final output.
+
+5. Re-read each final candidate's reasoning and confidence before responding.
+   If the final candidate list contradicts your evaluation, correct the list
+   before producing JSON.
+
+Your final JSON is the conclusion of the evaluation above.
+Do not generate a different answer after completing the evaluation.
 %s
 
 Output Schema: 
