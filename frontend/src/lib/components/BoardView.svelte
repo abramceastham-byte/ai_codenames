@@ -5,7 +5,6 @@
 	import GameControls from './GameControls.svelte';
 	import GameInfo from './GameInfo.svelte';
 	import TurnHistory from './TurnHistory.svelte';
-	import ClueHoldToggle from './ClueHoldToggle.svelte';
 	import type { Card, PlayerVote } from '$lib/types';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -62,8 +61,6 @@
 		</button>
 		<div class="text-sm text-gray-400">Game ID: {game?.id}</div>
 	</div>
-
-	<ClueHoldToggle />
 
 	<GameInfo />
 

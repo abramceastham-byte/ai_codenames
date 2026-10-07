@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/bcspragu/Codenames/codenames"
 	"github.com/bcspragu/Codenames/memdb"
@@ -134,215 +133,54 @@ func TestBasicallyEverything(t *testing.T) {
 	env.startGame(t, gID, 1)
 }
 
-func TestClueIsHeldUntilTheCluePhaseRunsItsMinimum(t *testing.T) {
-	const delay = 500 * time.Millisecond
-	env := setup(WithClueDelay(delay))
+func TestIllegalClueIsRejected(t *testing.T) {
+	env := setup()
 	gID := env.startedGame(t)
 
-	// The blue spymaster answers instantly, the way an AI would.
-	releaseAt, err := env.giveClue(t, gID, 0 /* user_0, blue spymaster */, "SPY", 2)
-	if err != nil {
-		t.Fatalf("failed to give clue: %v", err)
+	// DOCTORS is a form of the board word "doctor", so it's illegal.
+	if err := env.giveClue(t, gID, 0, "DOCTORS", 1); err == nil {
+		t.Fatal("giving a clue that collides with a board word succeeded, want an error")
 	}
 
-	if until := time.Until(time.UnixMilli(releaseAt)); until <= 0 || until > delay {
-		t.Errorf("clue release is %v away, want somewhere in (0, %v]", until, delay)
-	}
-
-	// Nothing may have reached the stored state yet — an operative refetching
-	// the game right now must not find the clue.
+	// A rejected clue must leave the turn where it was, so the spymaster can
+	// try again.
 	if got := env.clues(t, gID); len(got) != 0 {
-		t.Fatalf("clue was published immediately: %+v", got)
+		t.Errorf("a rejected clue was recorded: %+v", got)
 	}
-	g, err := env.db.Game(gID)
-	if err != nil {
-		t.Fatalf("failed to load game %q: %v", gID, err)
-	}
-	if g.State.ActiveRole != codenames.SpymasterRole {
-		t.Errorf("active role is %q during the hold, want %q — the turn moved on early", g.State.ActiveRole, codenames.SpymasterRole)
+	if role := env.state(t, gID).ActiveRole; role != codenames.SpymasterRole {
+		t.Errorf("active role is %q after a rejected clue, want %q", role, codenames.SpymasterRole)
 	}
 
-	// ...and once the phase has run its length, the clue comes out.
-	deadline := time.Now().Add(10 * time.Second)
-	for len(env.clues(t, gID)) == 0 {
-		if time.Now().After(deadline) {
-			t.Fatalf("clue was never released")
-		}
-		time.Sleep(10 * time.Millisecond)
+	if err := env.giveClue(t, gID, 0, "SPY", 1); err != nil {
+		t.Fatalf("failed to give a legal clue after a rejected one: %v", err)
+	}
+}
+
+func TestAcceptedClueGoesStraightOut(t *testing.T) {
+	env := setup()
+	gID := env.startedGame(t)
+
+	// Blue moves first in startedGame, and user_0 is their spymaster.
+	if err := env.giveClue(t, gID, 0, "SPY", 2); err != nil {
+		t.Fatalf("failed to give clue: %v", err)
 	}
 
 	wantClues := []codenames.SpymasterClue{
 		{Clue: codenames.Clue{Word: "SPY", Count: 2}, Team: codenames.BlueTeam},
 	}
 	if diff := cmp.Diff(wantClues, env.clues(t, gID)); diff != "" {
-		t.Errorf("unexpected clues after release (-want +got)\n%s", diff)
+		t.Errorf("unexpected clues after the clue was given (-want +got)\n%s", diff)
 	}
-
-	g, err = env.db.Game(gID)
-	if err != nil {
-		t.Fatalf("failed to load game %q: %v", gID, err)
-	}
-	if g.State.ActiveRole != codenames.OperativeRole {
-		t.Errorf("active role is %q after release, want %q", g.State.ActiveRole, codenames.OperativeRole)
+	if role := env.state(t, gID).ActiveRole; role != codenames.OperativeRole {
+		t.Errorf("active role is %q after a clue, want %q", role, codenames.OperativeRole)
 	}
 }
 
-func TestIllegalClueIsRejectedWithoutWaiting(t *testing.T) {
-	env := setup(WithClueDelay(time.Hour))
-	gID := env.startedGame(t)
-
-	// DOCTORS is a form of the board word "doctor", so it's illegal. The
-	// spymaster has to hear about that now, not in an hour.
-	if _, err := env.giveClue(t, gID, 0, "DOCTORS", 1); err == nil {
-		t.Fatal("giving a clue that collides with a board word succeeded, want an error")
-	}
-
-	// A rejected clue mustn't occupy the game's clue slot.
-	if _, err := env.giveClue(t, gID, 0, "SPY", 1); err != nil {
-		t.Fatalf("failed to give a legal clue after a rejected one: %v", err)
-	}
-}
-
-func TestSecondClueIsRejectedWhileOneIsHeld(t *testing.T) {
-	// A delay long enough that the first clue stays held for the whole test.
-	env := setup(WithClueDelay(time.Hour))
-	gID := env.startedGame(t)
-
-	if _, err := env.giveClue(t, gID, 0, "SPY", 2); err != nil {
-		t.Fatalf("failed to give clue: %v", err)
-	}
-
-	if _, err := env.giveClue(t, gID, 0, "MEDICAL", 1); err == nil {
-		t.Fatal("gave a second clue while the first was still held, want an error")
-	}
-
-	if got := env.clues(t, gID); len(got) != 0 {
-		t.Errorf("clues were published during the hold: %+v", got)
-	}
-}
-
-func TestSwitchingTheHoldOffReleasesAHeldClue(t *testing.T) {
-	// Long enough that the clue would still be waiting if the toggle did
-	// nothing, so a pass can only mean the toggle released it.
-	env := setup(WithClueDelay(time.Hour))
-	gID := env.startedGame(t)
-
-	team := env.state(t, gID).ActiveTeam
-	spymaster := 0
-	if team == codenames.RedTeam {
-		spymaster = 1
-	}
-	if _, err := env.giveClue(t, gID, spymaster, "SPY", 2); err != nil {
-		t.Fatalf("failed to give clue: %v", err)
-	}
-	if got := env.clues(t, gID); len(got) != 0 {
-		t.Fatalf("clue was published immediately: %+v", got)
-	}
-
-	// user_1 created the game, so it's user_1 who can flip the switch.
-	hold := env.setClueHold(t, gID, 1, false)
-	if hold.Enabled {
-		t.Errorf("clue hold reports enabled=%t after being switched off", hold.Enabled)
-	}
-
-	deadline := time.Now().Add(10 * time.Second)
-	for len(env.clues(t, gID)) == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("held clue was not released after the hold was switched off")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	wantClues := []codenames.SpymasterClue{
-		{Clue: codenames.Clue{Word: "SPY", Count: 2}, Team: team},
-	}
-	if diff := cmp.Diff(wantClues, env.clues(t, gID)); diff != "" {
-		t.Errorf("unexpected clues after the hold was switched off (-want +got)\n%s", diff)
-	}
-}
-
-func TestClueGoesStraightOutWhileTheHoldIsOff(t *testing.T) {
-	env := setup(WithClueDelay(time.Hour))
-	gID := env.startedGame(t)
-
-	env.setClueHold(t, gID, 1, false)
-
-	team := env.state(t, gID).ActiveTeam
-	spymaster := 0
-	if team == codenames.RedTeam {
-		spymaster = 1
-	}
-	release, err := env.giveClue(t, gID, spymaster, "SPY", 2)
-	if err != nil {
-		t.Fatalf("failed to give clue: %v", err)
-	}
-	if until := time.Until(time.UnixMilli(release)); until > 0 {
-		t.Errorf("release is %v away with the hold off, want no wait", until)
-	}
-
-	deadline := time.Now().Add(10 * time.Second)
-	for len(env.clues(t, gID)) == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("clue was withheld even though the hold was off")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-func TestOnlyTheCreatorCanReadOrFlipTheHold(t *testing.T) {
-	env := setup(WithClueDelay(time.Hour))
-	gID := env.startedGame(t)
-
-	// user_1 created the game; user_0, user_2 and user_3 did not.
-	if _, err := env.clueHold(t, gID, 1); err != nil {
-		t.Errorf("creator could not read the clue hold: %v", err)
-	}
-	for _, idx := range []int{0, 2, 3} {
-		if _, err := env.clueHold(t, gID, idx); err == nil {
-			t.Errorf("non-creator user_%d was able to read the clue hold", idx)
-		}
-		if _, err := env.setClueHoldErr(t, gID, idx, false); err == nil {
-			t.Errorf("non-creator user_%d was able to switch the clue hold off", idx)
-		}
-	}
-
-	// And the failed attempts left the hold alone.
-	hold, err := env.clueHold(t, gID, 1)
-	if err != nil {
-		t.Fatalf("failed to read the clue hold: %v", err)
-	}
-	if !hold.Enabled {
-		t.Error("clue hold was switched off by a non-creator")
-	}
-}
-
-func TestTheHoldCanBeSwitchedBackOnMidGame(t *testing.T) {
-	env := setup(WithClueDelay(time.Hour))
-	gID := env.startedGame(t)
-
-	env.setClueHold(t, gID, 1, false)
-	if hold := env.setClueHold(t, gID, 1, true); !hold.Enabled {
-		t.Fatal("clue hold would not switch back on")
-	}
-
-	team := env.state(t, gID).ActiveTeam
-	spymaster := 0
-	if team == codenames.RedTeam {
-		spymaster = 1
-	}
-	if _, err := env.giveClue(t, gID, spymaster, "SPY", 2); err != nil {
-		t.Fatalf("failed to give clue: %v", err)
-	}
-	if got := env.clues(t, gID); len(got) != 0 {
-		t.Errorf("clue was published immediately after the hold was switched back on: %+v", got)
-	}
-}
-
-// human returns the PlayerID as it should appear on the wire in
-// player-facing messages, where the human/robot distinction is stripped to
-// avoid revealing which players are AI.
+// human returns the PlayerID as it should appear on the wire for a human
+// player. The study build stripped the human/robot distinction here so players
+// couldn't tell which opponents were AI; a competition reports it as-is.
 func human(uID codenames.UserID) codenames.PlayerID {
-	return sanitizePlayerID(uID.AsPlayerID())
+	return uID.AsPlayerID()
 }
 
 // startingBoardCards returns the cards we expect on the test board, since we
@@ -522,7 +360,7 @@ func (env *testEnv) startGame(t *testing.T, gID codenames.GameID, authIdx int) {
 // giveClue submits a clue and returns when the server says the operatives will
 // see it, as Unix milliseconds. The handler error is returned rather than
 // fataled on, because rejecting a clue is a case worth testing.
-func (env *testEnv) giveClue(t *testing.T, gID codenames.GameID, authIdx int, word string, count int) (int64, error) {
+func (env *testEnv) giveClue(t *testing.T, gID codenames.GameID, authIdx int, word string, count int) error {
 	req := struct {
 		Word  string `json:"word"`
 		Count int    `json:"count"`
@@ -535,18 +373,17 @@ func (env *testEnv) giveClue(t *testing.T, gID codenames.GameID, authIdx int, wo
 
 	handler := env.srv.requireGameAuth(env.srv.serveClue, isSpymaster(), isGamePlaying())
 	if err := handler(w, r); err != nil {
-		return 0, err
+		return err
 	}
 
 	var resp struct {
-		Success     bool  `json:"success"`
-		ReleaseAtMS int64 `json:"release_at_ms"`
+		Success bool `json:"success"`
 	}
 	fromBody(t, w, &resp)
 	if !resp.Success {
 		t.Fatalf("clue %q was not accepted", word)
 	}
-	return resp.ReleaseAtMS, nil
+	return nil
 }
 
 // startedGame runs a game through setup and returns its ID, with roles fixed
@@ -586,52 +423,6 @@ func (env *testEnv) state(t *testing.T, gID codenames.GameID) *codenames.GameSta
 	return g.State
 }
 
-// clueHold reads the game's clue hold setting, returning the handler error so
-// tests can check that non-creators are turned away.
-func (env *testEnv) clueHold(t *testing.T, gID codenames.GameID, authIdx int) (clueHoldResp, error) {
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/api/game/"+string(gID)+"/clueHold", nil)
-	r = mux.SetURLVars(r, map[string]string{"id": string(gID)})
-	env.addAuth(r, authIdx)
-
-	handler := env.srv.requireGameAuth(env.srv.serveClueHold, isGameCreator())
-	if err := handler(w, r); err != nil {
-		return clueHoldResp{}, err
-	}
-
-	var resp clueHoldResp
-	fromBody(t, w, &resp)
-	return resp, nil
-}
-
-func (env *testEnv) setClueHoldErr(t *testing.T, gID codenames.GameID, authIdx int, on bool) (clueHoldResp, error) {
-	req := struct {
-		Enabled bool `json:"enabled"`
-	}{on}
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/api/game/"+string(gID)+"/clueHold", toBody(t, req))
-	r = mux.SetURLVars(r, map[string]string{"id": string(gID)})
-	env.addAuth(r, authIdx)
-
-	handler := env.srv.requireGameAuth(env.srv.serveSetClueHold, isGameCreator())
-	if err := handler(w, r); err != nil {
-		return clueHoldResp{}, err
-	}
-
-	var resp clueHoldResp
-	fromBody(t, w, &resp)
-	return resp, nil
-}
-
-func (env *testEnv) setClueHold(t *testing.T, gID codenames.GameID, authIdx int, on bool) clueHoldResp {
-	resp, err := env.setClueHoldErr(t, gID, authIdx, on)
-	if err != nil {
-		t.Fatalf("failed to set clue hold to %t: %v", on, err)
-	}
-	return resp
-}
-
 func (env *testEnv) addAuth(r *http.Request, authIdx int) {
 	r.AddCookie(env.userAuth[authIdx])
 }
@@ -663,20 +454,8 @@ func setup(opts ...Option) *testEnv {
 		db,
 		rand.New(rand.NewSource(0)),
 		setupCookies(),
-		nil, /* AI client, not used yet */
-		"",  /* logDir, not used in tests */
-		"",  /* adminSecret, not used in tests */
 		opts...,
 	)
-
-	// The server assigns every player a generated name. Make them
-	// deterministic ("Test0", "Test1", ...) so expectations are stable.
-	var nameCount int
-	srv.genName = func() string {
-		name := fmt.Sprintf("Test%d", nameCount)
-		nameCount++
-		return name
-	}
 
 	return &testEnv{
 		db:  db,

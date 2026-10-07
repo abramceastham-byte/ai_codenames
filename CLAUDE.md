@@ -4,12 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Codenames is a full-stack implementation of the Codenames board game with:
-- **Go backend** (game server + AI server)
-- **Svelte 5 frontend** (SvelteKit, Tailwind CSS v4)
+A Codenames **bot competition** platform: students write their own AI players,
+run them on their own machines, and connect them to this server over WebSocket
+to play against each other.
+
+- **Go backend** — game server, referee, and bot protocol endpoint
+- **Svelte 5 frontend** (SvelteKit, Tailwind CSS v4) — host lobby and spectator view
+- **Python kit** (`kit/`, from Phase 4) — base class, examples, and offline runner for students
+
+Branch note: this is `codenames-competition`. `master` holds the AI Turing-test
+study and must keep all of its current functionality — never commit to, merge
+into, rebase, or push `master` from this branch.
 
 ## Objective
-- This is a turing test for the codenames board game. The main goal is to create a human like LLM player for use against real human players.
+
+Students build bots; bots play bots. A bot can be anything (Ollama, a paid API,
+hand-written Python) as long as it speaks the protocol. The server is the
+referee: it validates every bot message against the schema and the rules of
+Codenames, enforces timeouts, and logs every message so students can debug.
+
+See `PLAN.md` for the full build plan, the protocol draft, and the open
+decisions.
 
 ## Dev Commands
 
@@ -34,99 +49,87 @@ pnpm run lint           # Prettier + ESLint
 pnpm run format         # Auto-format
 ```
 
-### Running Locally (3 terminals)
+Note: `pnpm run lint` currently reports 6 pre-existing errors inherited from
+`master` (`svelte/prefer-svelte-reactivity`, `no-explicit-any`, `prefer-const`,
+`no-navigation-without-resolve`). They are unrelated to the competition work.
 
-First-time setup: `cd frontend && pnpm install` (skip on subsequent runs).
+### Running Locally (2 terminals)
+
+First-time setup: `cd frontend && pnpm install`.
 
 ```bash
-# Terminal 1 — web server (port 8080)
-AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenames-server/
+# Terminal 1 — game server (port 8080)
+go run ./cmd/codenames-server/
 
 # Terminal 2 — frontend (port 5173)
 cd frontend && pnpm run dev
 ```
 
-```bash
-# Terminal 3 — AI server, qwen3 with thinking disabled (faster, less deliberate)
-AUTH_SECRET=abc123 \
-WEB_SERVER_ENDPOINT=http://localhost:8080 \
-ENABLED_BACKENDS=llm \
-DEFAULT_BACKEND=llm \
-OLLAMA_ENDPOINT=http://localhost:11434 \
-go run ./cmd/ai-server/ --ollama_think=false
-```
-
-
-Then open `http://localhost:5173`. The `llm` backend requires [Ollama](https://ollama.com) running with the model pulled (`ollama pull qwen3:30b-a3b` — a ~18GB download); drop `llm` from `ENABLED_BACKENDS` if you only want the w2v player.
-
-`qwen3:30b-a3b` is the default model (`--ollama_model`, `OLLAMA_MODEL`). It's a 30B mixture-of-experts with ~3B active parameters, so it's much faster per token than a dense reasoning model of comparable quality, and its reasoning can be toggled — which is what `--ollama_think=false` in the Terminal 3 command does. With thinking off, responses come back in seconds instead of minutes, at the cost of some deliberation quality; drop the flag (or pass `--ollama_think=true`) when you want the more careful player.
-
-The flag does more than set Ollama's `think` field: `llm/llm.go` swaps in different prompt text depending on it. With thinking enabled the model is told to deliberate inside `<think>` and emit only the schema afterwards; with it disabled the model is told it has no scratch space and must reply with the schema alone. Either way, whatever deliberation the model does produce — inline `<think>...</think>` markup or Ollama's separate `thinking` field — is pulled out before the final answer is parsed and folded into the reasoning logged to `logs/ai_reasoning.jsonl` (visible via `/admin/{gameId}`) instead of being discarded.
-
-The timeouts still carry qwq-era headroom: `llm.DefaultTimeout` (3 minutes) and the per-guess budget (half that) in `llm/llm.go` were sized for `qwq:32b`, a pure reasoning model that can't disable its `<think>` block and so always pays the full thinking cost. They're generous for qwen3 with thinking off. Swapping back to qwq is `OLLAMA_MODEL=qwq:32b` with `--ollama_think` left unset.
-
-`--ollama_think` (`true`/`false`, unset by default) sets Ollama's top-level `think` field. Leaving it unset sends nothing and lets the model use its own default — the right choice for a model with no toggle. Other tunables: `--ollama_max_tokens` (num_predict budget, thinking + answer), `--ollama_timeout`, `--ollama_temperature`, `--ollama_seed` (fixes sampling for reproducible research runs).
+Then open `http://localhost:5173`. There are no model files to download and no
+AI service to start: every player is either a person in the browser or a student
+bot connecting from outside.
 
 ### Running Locally (Docker Compose)
 
-`docker compose up --build` starts all four services (a one-shot `model-setup` job, then web server, AI server, frontend) with sane dev defaults — see `docker-compose.yml` and the "Running Locally via Docker Compose" section in README.md. `model-setup` fetches + converts `data/glove.bin`/`data/conceptnet.bin` automatically (Dockerfile.modelsetup, using `scripts/setup_models.sh`), so no host-side Python is required for the Docker flow specifically — only the manual (non-Docker) flow needs Python installed to run that script directly.
+`docker compose up --build` starts the server and the frontend dev server.
 
 ## Architecture
 
 ### Backend Package Layout
 
-**Domain:** `codenames/` defines core types (`Game`, `Board`, `Card`, `Agent`, `Clue`) and the `DB` interface that all storage backends must satisfy.
+**Domain:** `codenames/` defines core types (`Game`, `Board`, `Card`, `Agent`,
+`Clue`) and the `DB` interface that all storage backends must satisfy. It also
+holds the word list and `ConflictingBoardWord`, the morphological check that
+rejects a clue sharing a root with a board word (`kings`, `kingdom`, `kingly`
+are all illegal when `KING` is on the board) while allowing coincidental
+containment (`bring` for `RING`). That function is the referee's clue rule.
 
-**Game logic:** `game/` implements rules, turn management, and two execution modes:
-- `Play()` — fully automated game (all players are bots)
-- `Move()` — single step used by the web server for human/mixed games
+**Game logic:** `game/` implements rules and turn management in two modes:
+- `Play()` — fully automated game, used by referee tests
+- `Move()` — single step, the one authoritative path for applying any move
 
-Both modes use the `Spymaster` and `Operative` interfaces, making AI and human players interchangeable.
+Both use the `Spymaster` and `Operative` interfaces, so bots, people and test
+fakes are interchangeable.
 
-**Web service:** `web/` contains HTTP handlers and routing (REST + WebSocket). REST handles commands (join, start, clue, guess); WebSocket broadcasts state changes to all players. The `hub/` package manages WebSocket connection multiplexing.
+**Web service:** `web/` contains HTTP handlers and routing (REST + WebSocket).
+REST handles browser commands (join, start, clue, guess); WebSocket broadcasts
+state changes to everyone watching.
 
-**Storage:** `sqldb/` implements `codenames.DB` with SQLite. `memdb/` provides an in-memory implementation used in tests.
+**Storage:** `sqldb/` implements `codenames.DB` with SQLite. `memdb/` provides an
+in-memory implementation used in tests.
 
-**AI:** `w2v/` implements `Spymaster` and `Operative` using dual Word2Vec models (GloVe + ConceptNet). Scoring applies count bonuses and multi-word penalties. `aiclient/` is the HTTP client the web server uses to call the AI server.
+**Transport:** `hub/` manages WebSocket connection multiplexing per game.
 
-**Consensus:** `consensus/` tracks operative votes — a strict majority (>50%) is required to finalize a guess in multiplayer games.
-
-**Clue delay:** `cluedelay/` puts a floor (default 60s, `--clue_delay`) on how long a spymaster's clue phase lasts. A clue submitted sooner is held by the web server — not written to the DB, not broadcast — until the phase reaches that age, so an AI spymaster's response speed can't give it away. The spymaster's own client learns the release time from the clue response; nobody else sees anything until release.
-
-The hold is per game and can be flipped mid-game by the game creator (`GET`/`POST /api/game/{id}/clueHold`, gated on `isGameCreator`), surfaced as a toggle in the setup and board views. Switching it off releases a clue that's mid-hold immediately. The setting is deliberately never broadcast and the endpoint refuses non-creators — an operative who knew the hold was off could read a three-second clue as a bot. State is in-memory, so a server restart returns every game to the `--clue_delay` default; `--clue_delay=0` disables holding server-wide and the per-game toggle then has no duration to switch on.
-
-**Messages:** `msgs/` defines all WebSocket message types with JSON marshaling (`RoleAssigned`, `GameStart`, `ClueGiven`, `GuessGiven`, `PlayerVote`, etc.).
+**Messages:** `msgs/` defines the browser-facing WebSocket message types
+(`RoleAssigned`, `GameStart`, `ClueGiven`, `GuessGiven`, `PlayerVote`,
+`GameEnd`). The bot-facing protocol is separate and versioned — see `PLAN.md`
+§4.
 
 ### Frontend
 
-`src/lib/game.svelte.ts` is the central singleton `GameStore` that holds user identity, the WebSocket connection, and all reactive game state (Svelte 5 runes).
+`src/lib/game.svelte.ts` is the central singleton `GameStore` that holds user
+identity, the WebSocket connection, and all reactive game state (Svelte 5
+runes).
 
-`src/lib/api.ts` wraps REST calls. Components dispatch actions via REST; state updates arrive via WebSocket and are applied to the store.
+`src/lib/api.ts` wraps REST calls. Components dispatch actions via REST; state
+updates arrive via WebSocket and are applied to the store.
 
-SvelteKit is configured as a fully static SPA (`adapter-static`, `fallback: '200.html'`), so the built `frontend/build/` directory is served as static files by the Go web server.
+SvelteKit is configured as a fully static SPA (`adapter-static`,
+`fallback: '200.html'`). `Dockerfile.websrv` builds it into the server image so
+one URL serves the API, the bot socket and the UI.
 
-### Key Environment Variables
+### Key Environment Variables / Flags
 
-| Variable | Used by | Purpose |
-|---|---|---|
-| `AUTH_SECRET` | both servers | Shared secret for inter-service auth |
-| `AI_SERVER_ENDPOINT` | web server | URL of AI service |
-| `WEB_SERVER_ENDPOINT` | AI server | URL of web service |
-| `GLOVE_MODEL_PATH` | AI server | GloVe Word2Vec binary |
-| `CONCEPT_NET_MODEL_PATH` | AI server | ConceptNet Word2Vec binary |
-| `COMMON_WORDLIST` | AI server | Common words file for operative guessing |
-| `ENABLED_BACKENDS` | AI server | Comma-separated backends to load (`w2v`, `llm`) |
-| `DEFAULT_BACKEND` | AI server | Backend used when caller doesn't specify |
-| `OLLAMA_ENDPOINT` | AI server | Ollama URL for the `llm` backend (default `http://localhost:11434`) |
-| `OLLAMA_MODEL` | AI server | Ollama model name for the `llm` backend (default `qwen3:30b-a3b`) |
-
-The web server also accepts `--addr` (default `:8080`), `--db_path` (default `codenames.db`), `--clue_delay` (default `60s`, `0` to disable), and `--hash_key_path`/`--block_key_path` for secure cookie keys (auto-generated if missing).
+The server accepts `--addr` (default `:8080`), `--db_path` (default
+`codenames.db`), and `--hash_key_path`/`--block_key_path` for secure cookie keys
+(auto-generated if missing). Every flag can also be set as an environment
+variable via `peterbourgon/ff` (e.g. `DB_PATH`).
 
 ### Docker
 
 ```bash
-docker build -t codenames-web -f Dockerfile.websrv .
-docker build -t codenames-ai  -f Dockerfile.aisrv  .
+docker build -t codenames-competition -f Dockerfile.websrv .
 ```
 
-Both use multi-stage builds (Go builder → scratch) for minimal images.
+Multi-stage: Node builds the SPA, Go builds the server, both land in a
+distroless image.

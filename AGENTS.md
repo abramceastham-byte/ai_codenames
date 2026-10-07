@@ -1,67 +1,58 @@
-# Agent Guide for Codenames
+# Agent Guide for the Codenames Bot Competition
 
-This repository contains a full-stack implementation of the Codenames board game, featuring a Go backend, a Svelte 5 static frontend, and an AI player based on Word2Vec.
+A Codenames bot competition: students write AI players, run them on their own
+machines, and connect them to this server over WebSocket to play each other.
+
+**Branch rule:** work happens on `codenames-competition`. `master` holds the AI
+Turing-test study — never commit to, merge into, rebase, or push it from here.
 
 ## 📂 Project Structure
 
 - **Backend (Go)**
-  - `cmd/`: Entry points for services and tools.
-    - `codenames-server/`: Main HTTP API server.
-    - `ai-server/`: AI player service.
-    - `codenames-local/`: CLI tool for playing locally.
-  - `codenames/`: Core domain types and interfaces.
-  - `embedding/`: Experimental embedding-based AI
-  - `web/`: HTTP handlers and WebSocket logic.
-  - `game/`: Game logic implementation.
-  - `sqldb/`: SQLite database implementation.
-  - `vision/`: Cloud Vision API integration for board parsing.
+  - `cmd/codenames-server/`: the game server (API + bot WebSocket + static SPA).
+  - `codenames/`: core domain types, the word list, and the clue legality check.
+  - `game/`: the authoritative rules engine.
+  - `web/`: HTTP handlers and WebSocket routing.
+  - `hub/`: per-game WebSocket connection multiplexing.
+  - `sqldb/` / `memdb/`: persistence and its in-memory test double.
+  - `boardgen/`: board generation.
 
 - **Frontend**
-  - `frontend/`: SvelteKit (Svelte 5) application (Newer/Experimental).
+  - `frontend/`: SvelteKit (Svelte 5) host lobby and spectator view.
 
 ## 🛠 Development Workflow
 
 ### Backend (Go)
 
-- **Build Services**:
-  ```bash
-  go build ./cmd/codenames-server
-  go build ./cmd/ai-server
-  ```
-- **Run Tests**:
-  ```bash
-  go test ./...
-  ```
+```bash
+go build ./...
+go test ./...
+go vet ./...
+```
 
 ### Frontend (Svelte)
 
-Located in `frontend/`.
-
-- **Install Dependencies**: `pnpm install`
-- **Dev Server**: `pnpm run dev`
-- **Check Types**: `pnpm run check`
-- **Lint**: `pnpm run lint`
+From `frontend/`: `pnpm install`, `pnpm run dev`, `pnpm run check`,
+`pnpm run lint`. Lint has 6 known pre-existing errors inherited from `master`.
 
 ## 🏗 Architecture & Patterns
 
-- **API Design**:
-  - RESTful endpoints for CRUD actions (User, Game creation).
-  - WebSockets for real-time game state updates (`/api/game/{id}/ws`).
-  - See `web/README.md` for detailed API docs.
+- **API design**
+  - REST for browser commands; WebSocket for live state
+    (`/api/game/{id}/ws`).
+  - A separate versioned JSON protocol for bots — see `PLAN.md` §4 and
+    `web/README.md`.
+  - Every move, from any source, is applied through `game.Move()`. That is the
+    single rules path; do not add a second one.
 
-- **Database**:
-  - Uses SQLite (`sqldb`) for persistence.
-  - `memdb` available for in-memory testing.
+- **Database**
+  - SQLite (`sqldb`) for persistence, `memdb` for tests.
 
-- **AI Integration**:
-  - Uses `word2vec` models for word associations.
-  - Requires external model files (GoogleNews vectors or Project Gutenberg).
-    - Stored in the `data/` directory
-  - See `w2v/README.md` for model acquisition instructions.
+- **Referee**
+  - The server validates bot messages and never trusts a client to enforce a
+    rule. Clue legality lives in `codenames.ConflictingBoardWord`.
 
 ## 🚀 Deployment
 
-- **Containerization**:
-  - `Dockerfile.websrv`
-  - `Dockerfile.aisrv`
-- **Production**: Deploys to `https://codenames.ai`, currently done manually
+A single Fly.io app, separate from the study, built from `Dockerfile.websrv`.
+See `PLAN.md` §6 and (from Phase 5) `docs/DEPLOY.md`.

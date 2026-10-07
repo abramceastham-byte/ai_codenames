@@ -1,18 +1,21 @@
-apiKey
-blockKey
-cmd/ai-server/ai-server
-cmd/codenames-client/codenames-client
-cmd/codenames-local/codenames-local
-cmd/w2v-topn/w2v-topn
-cmd/word-server/word-server
-codenames.db*
-config
-data/**
-data/*.bin
-data/words.txt
-data/common_words.txt
+# Secure-cookie keys, generated on first run.
 hashKey
-node_modules
-embeddings/spymaster.bin
-embeddings/operative.bin
+blockKey
+
+# Local database and its SQLite sidecars.
+codenames.db*
+
+# Per-game bot protocol logs.
 logs/
+
+# Build output.
+/codenames-server
+cmd/codenames-server/codenames-server
+frontend/build
+frontend/.svelte-kit
+node_modules
+
+# Python kit.
+__pycache__/
+*.pyc
+.venv/

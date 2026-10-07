@@ -2,29 +2,21 @@
 package web
 
 import (
-	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/bcspragu/Codenames/aiclient"
 	"github.com/bcspragu/Codenames/boardgen"
-	"github.com/bcspragu/Codenames/cluedelay"
 	"github.com/bcspragu/Codenames/codenames"
-	"github.com/bcspragu/Codenames/consensus"
 	"github.com/bcspragu/Codenames/game"
 	"github.com/bcspragu/Codenames/httperr"
 	"github.com/bcspragu/Codenames/hub"
 	"github.com/bcspragu/Codenames/msgs"
-	"github.com/bcspragu/Codenames/names"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/securecookie"
 	"github.com/gorilla/websocket"
@@ -34,6 +26,9 @@ const (
 	// Each of the four role slots (per team, per role) holds exactly one
 	// player — spectators pick up any seat that's still open.
 	maxOperativesPerTeam = 1
+	// maxNameLen bounds a self-chosen display name, which now reaches us from
+	// the client instead of being generated server-side.
+	maxNameLen = 40
 )
 
 // describeRole renders a role for a user-facing message, e.g. "a spymaster"
@@ -50,34 +45,19 @@ func describeRole(r codenames.Role) string {
 }
 
 type Srv struct {
-	sc          *securecookie.SecureCookie
-	hub         *hub.Hub
-	mux         *mux.Router
-	db          codenames.DB
-	r           *rand.Rand
-	ws          *websocket.Upgrader
-	consensus   *consensus.Guesser
-	clues       *cluedelay.Tracker
-	ai          *aiclient.Client
-	logDir      string
-	genName     func() string
-	adminSecret string
+	sc  *securecookie.SecureCookie
+	hub *hub.Hub
+	mux *mux.Router
+	db  codenames.DB
+	r   *rand.Rand
+	ws  *websocket.Upgrader
 }
 
 // Option overrides a server default.
 type Option func(*Srv)
 
-// WithClueDelay sets how long a spymaster's clue is withheld from their
-// operatives, measured from the start of the clue phase rather than from
-// submission. Defaults to cluedelay.DefaultDelay.
-func WithClueDelay(d time.Duration) Option {
-	return func(s *Srv) {
-		s.clues = cluedelay.New(d)
-	}
-}
-
 // New returns an initialized server.
-func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aiclient.Client, logDir, adminSecret string, opts ...Option) *Srv {
+func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, opts ...Option) *Srv {
 	s := &Srv{
 		sc:  sc,
 		hub: hub.New(),
@@ -88,12 +68,6 @@ func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aicli
 				return true
 			},
 		},
-		consensus:   consensus.New(),
-		clues:       cluedelay.New(cluedelay.DefaultDelay),
-		ai:          ai,
-		logDir:      logDir,
-		genName:     names.Random,
-		adminSecret: adminSecret,
 	}
 
 	for _, opt := range opts {
@@ -120,18 +94,6 @@ func (s *Srv) initMux() *mux.Router {
 			path:        "/api/user",
 			method:      http.MethodPost,
 			handlerFunc: s.serveCreateUser,
-		},
-		// New AI player.
-		{
-			path:        "/api/ai",
-			method:      http.MethodPost,
-			handlerFunc: s.serveCreateAI,
-		},
-		// List available AI backends.
-		{
-			path:        "/api/ai/backends",
-			method:      http.MethodGet,
-			handlerFunc: s.serveAIBackends,
 		},
 		// Edit a user
 		{
@@ -169,12 +131,6 @@ func (s *Srv) initMux() *mux.Router {
 			method:      http.MethodGet,
 			handlerFunc: s.requireGameAuth(s.serveGamePlayers),
 		},
-		// Request to add an AI player to a game.
-		{
-			path:        "/api/game/{id}/requestAI",
-			method:      http.MethodPost,
-			handlerFunc: s.requireGameAuth(s.serveRequestAI, isGameCreator(), isGamePending()),
-		},
 		// Remove a player (typically a misplaced AI, or a self-removal) from a pending game.
 		{
 			path:        "/api/game/{id}/removePlayer",
@@ -205,19 +161,6 @@ func (s *Srv) initMux() *mux.Router {
 			method:      http.MethodPost,
 			handlerFunc: s.requireGameAuth(s.serveClue, isSpymaster(), isGamePlaying()),
 		},
-		// Read whether this game holds clues. Creator-only: telling an
-		// operative whether the hold is on would undo the point of it.
-		{
-			path:        "/api/game/{id}/clueHold",
-			method:      http.MethodGet,
-			handlerFunc: s.requireGameAuth(s.serveClueHold, isGameCreator()),
-		},
-		// Turn this game's clue hold on or off, mid-game.
-		{
-			path:        "/api/game/{id}/clueHold",
-			method:      http.MethodPost,
-			handlerFunc: s.requireGameAuth(s.serveSetClueHold, isGameCreator()),
-		},
 		// Serve a card guess to a game.
 		{
 			path:        "/api/game/{id}/guess",
@@ -229,18 +172,6 @@ func (s *Srv) initMux() *mux.Router {
 			path:        "/api/game/{id}/ws",
 			method:      http.MethodGet,
 			handlerFunc: s.requireGameAuth(s.serveData),
-		},
-		// Save game log to disk.
-		{
-			path:        "/api/game/{id}/log",
-			method:      http.MethodPost,
-			handlerFunc: s.requireGameAuth(s.serveGameLog),
-		},
-		// Admin-only: view AI reasoning + player types for a game.
-		{
-			path:        "/api/admin/game/{id}/log",
-			method:      http.MethodGet,
-			handlerFunc: s.requireAdmin(s.serveAdminGameLog),
 		},
 	}
 
@@ -268,36 +199,27 @@ func (s *Srv) handleError(h handlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Srv) serveCreateAI(w http.ResponseWriter, r *http.Request) error {
-	return s.serveCreatePlayer(w, r, codenames.PlayerTypeRobot)
-}
-
-func (s *Srv) serveAIBackends(w http.ResponseWriter, r *http.Request) error {
-	if s.ai == nil {
-		return jsonResp(w, struct {
-			Backends []string `json:"backends"`
-			Default  string   `json:"default"`
-		}{[]string{}, ""})
-	}
-
-	bs, err := s.ai.Backends()
-	if err != nil {
-		return httperr.
-			Internal("failed to fetch AI backends: %w", err).
-			WithMessage("AI server is unavailable")
-	}
-	return jsonResp(w, bs)
-}
-
 func (s *Srv) serveCreateUser(w http.ResponseWriter, r *http.Request) error {
 	return s.serveCreatePlayer(w, r, codenames.PlayerTypeHuman)
 }
 
+// defaultNameLen is how many hex characters of a player's ID get folded into
+// their fallback display name.
+const defaultNameLen = 4
+
 func (s *Srv) serveCreatePlayer(w http.ResponseWriter, r *http.Request, pt codenames.PlayerType) error {
-	// Players don't pick their own names — everyone (human or AI) gets a
-	// randomly generated one so names can't be used to tell humans and AIs
-	// apart. Any name in the request body is intentionally ignored.
-	name := s.genName()
+	// Competition players pick their own names — unlike the study, where every
+	// player got a generated one so names couldn't be used to tell humans and
+	// AIs apart. Here the whole point is knowing whose bot is whose.
+	var req struct {
+		Name string `json:"name"`
+	}
+	// An empty body is fine; the name just falls back below.
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	name := strings.TrimSpace(req.Name)
+	if len(name) > maxNameLen {
+		name = name[:maxNameLen]
+	}
 
 	var newPlayer func(name string) (codenames.PlayerID, error)
 	switch pt {
@@ -321,11 +243,17 @@ func (s *Srv) serveCreatePlayer(w http.ResponseWriter, r *http.Request, pt coden
 		return httperr.Internal("create player request contained invalid player type: %q", pt)
 	}
 
+	// The ID isn't known until the row exists, so a player who sent no name is
+	// created with a placeholder and named from their own ID afterwards. That
+	// keeps names unique without a second random source to collide on.
 	id, err := newPlayer(name)
 	if err != nil {
 		return httperr.
 			Internal("failed to create player with name %q, type %q: %w", name, pt, err).
 			WithMessage("failed to create player")
+	}
+	if name == "" {
+		name = "Player-" + id.ID[:defaultNameLen]
 	}
 
 	encoded, err := s.sc.Encode("auth", id)
@@ -464,110 +392,6 @@ func (s *Srv) servePendingGames(w http.ResponseWriter, r *http.Request) error {
 	return jsonResp(w, gIDs)
 }
 
-func (s *Srv) serveGameLog(w http.ResponseWriter, r *http.Request, p *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
-	var req struct {
-		Entries []struct {
-			Round      int     `json:"round"`
-			Team       string  `json:"team"`
-			Type       string  `json:"type"`
-			Detail     string  `json:"detail"`
-			Result     string  `json:"result"`
-			DurationMs float64 `json:"durationMs"`
-		} `json:"entries"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return httperr.BadRequest("failed to decode log request: %w", err)
-	}
-
-	if err := os.MkdirAll(s.logDir, 0755); err != nil {
-		return httperr.Internal("failed to create log dir: %w", err)
-	}
-
-	// The client can't tell us which backend played a given team/role — its
-	// player list is deliberately scrubbed of that (see sanitizePlayerID) so
-	// a fast/slow response can't out an AI mid-game. We backfill "model"
-	// ourselves from the AI server's reasoning log — the same source
-	// serveAdminGameLog uses — matched by team+role. That log only exists
-	// server-to-server and is never sent to a player, so this can't leak
-	// anything live; it only ever lands in this file, after the game.
-	backendFor := make(map[string]string) // "TEAM:ROLE" -> backend
-	if entries, err := s.ai.GetReasoning(game.ID); err != nil {
-		log.Printf("failed to fetch AI reasoning for game %q while saving log (leaving model column as \"human\"): %v", game.ID, err)
-	} else {
-		for _, e := range entries {
-			backendFor[string(e.Team)+":"+string(e.Role)] = e.Backend
-		}
-	}
-	modelFor := func(team, entryType string) string {
-		role := codenames.OperativeRole
-		if entryType == "clue" {
-			role = codenames.SpymasterRole
-		}
-		if backend, ok := backendFor[team+":"+string(role)]; ok {
-			return backend
-		}
-		return "human"
-	}
-
-	combinedPath := filepath.Join(s.logDir, "all_games.csv")
-
-	// Count existing games in the combined file to determine this game's
-	// number, and whether it already has a header row — driven off the same
-	// parse so the two can't disagree (e.g. a file with only a stray blank
-	// line is empty for both purposes, not just one).
-	gameNum := 1
-	needsHeader := true
-	if existing, err := os.Open(combinedPath); err == nil {
-		r2 := csv.NewReader(existing)
-		rows, _ := r2.ReadAll()
-		existing.Close()
-		if len(rows) > 0 {
-			needsHeader = false
-			seen := make(map[string]struct{})
-			for _, row := range rows[1:] { // skip header
-				if len(row) > 0 {
-					seen[row[0]] = struct{}{} // row[0] is game_num
-				}
-			}
-			gameNum = len(seen) + 1
-		}
-	}
-	f, err := os.OpenFile(combinedPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return httperr.Internal("failed to open combined log file: %w", err)
-	}
-	defer f.Close()
-
-	w2 := csv.NewWriter(f)
-	if needsHeader {
-		w2.Write([]string{"game_num", "game_id", "round", "team", "type", "detail", "result", "model", "duration_ms"})
-	}
-	gameNumStr := strconv.Itoa(gameNum)
-	for _, e := range req.Entries {
-		w2.Write([]string{
-			gameNumStr,
-			string(game.ID),
-			strconv.Itoa(e.Round),
-			e.Team,
-			e.Type,
-			e.Detail,
-			e.Result,
-			modelFor(e.Team, e.Type),
-			strconv.FormatFloat(e.DurationMs, 'f', 0, 64),
-		})
-	}
-	w2.Flush()
-	if err := w2.Error(); err != nil {
-		return httperr.Internal("failed to write CSV: %w", err)
-	}
-
-	log.Printf("Saved game log #%d (%q) to %s (%d entries)", gameNum, game.ID, combinedPath, len(req.Entries))
-	return jsonResp(w, struct {
-		Path    string `json:"path"`
-		GameNum int    `json:"game_num"`
-	}{combinedPath, gameNum})
-}
-
 func (s *Srv) serveGame(w http.ResponseWriter, r *http.Request, p *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
 	// If you aren't in this game or ain't a spymaster, you don't get to see what
 	// color all the cards are, that's [REDACTED].
@@ -577,30 +401,6 @@ func (s *Srv) serveGame(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 	}
 
 	return jsonResp(w, game)
-}
-
-func (s *Srv) serveRequestAI(w http.ResponseWriter, r *http.Request, creator *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
-	var req struct {
-		Team    string `json:"team"`
-		Role    string `json:"role"`
-		Backend string `json:"backend"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return httperr.BadRequest("failed to decode request AI request: %w", err)
-	}
-
-	robotID, err := s.ai.JoinGame(game.ID, req.Team, req.Role, req.Backend)
-	if err != nil {
-		return httperr.
-			Internal("failed to request an AI join game %q: %w", game.ID, err).
-			WithMessage("AI server is unavailable, try again later")
-	}
-
-	return jsonResp(w, struct {
-		Success bool   `json:"success"`
-		RobotID string `json:"robot_id"`
-	}{true, string(robotID)})
 }
 
 func (s *Srv) serveRemovePlayer(w http.ResponseWriter, r *http.Request, p *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
@@ -911,11 +711,6 @@ func (s *Srv) serveStartGame(w http.ResponseWriter, r *http.Request, p *codename
 			WithMessage("failed to make players")
 	}
 
-	// The starting team's clue phase begins now. Start the clock before the
-	// message goes out, or an AI spymaster that answers the instant it sees
-	// GAME_START would be timed from after its own reply.
-	s.clues.Start(game.ID)
-
 	if err := s.broadcastMessage(game, prs, func(g *codenames.Game) any {
 		return &msgs.GameStart{
 			Game:    g,
@@ -1003,13 +798,6 @@ func (s *Srv) finishAssigningRoles(game *codenames.Game, prs []*codenames.Player
 	return len(unassigned) > 0, nil
 }
 
-// sanitizePlayerID strips the human/robot distinction from a PlayerID before
-// it's sent to players, so that clients have no way to tell who is an AI.
-// This information is only ever exposed via the admin-only reasoning log.
-func sanitizePlayerID(id codenames.PlayerID) codenames.PlayerID {
-	return codenames.PlayerID{PlayerType: codenames.UnknownPlayerType, ID: id.ID}
-}
-
 func (s *Srv) toPlayers(prs []*codenames.PlayerRole) ([]*msgs.Player, error) {
 	var ids []codenames.PlayerID
 	for _, pr := range prs {
@@ -1028,7 +816,7 @@ func (s *Srv) toPlayers(prs []*codenames.PlayerRole) ([]*msgs.Player, error) {
 			return nil, fmt.Errorf("no name was returned for player ID %q", pr.PlayerID)
 		}
 		out = append(out, &msgs.Player{
-			PlayerID: sanitizePlayerID(pr.PlayerID),
+			PlayerID: pr.PlayerID,
 			Name:     name,
 			Team:     pr.Team,
 			Role:     pr.Role,
@@ -1082,156 +870,46 @@ func (s *Srv) serveClue(w http.ResponseWriter, r *http.Request, p *codenames.Pla
 		Word:  strings.ToUpper(req.Word),
 		Count: req.Count,
 	}
-	mv := &game.Move{
+	newState, newStatus, err := game.NewForMove(g.State).Move(&game.Move{
 		Action:   game.ActionGiveClue,
 		Team:     userPR.Team,
 		GiveClue: clue,
-	}
-
-	// Validate against a throwaway copy of the state so an illegal clue is
-	// rejected while the spymaster is still looking at the response. The real
-	// move is applied at release time; nothing that Move checks — whose turn it
-	// is, whether the clue collides with a board word — can change in between,
-	// because only a guess moves the game on and no guess is possible until
-	// this clue lands.
-	if _, _, err := game.NewForMove(g.State.Clone()).Move(mv); err != nil {
+	})
+	if err != nil {
 		// We assume the error is the result of a bad request.
 		return httperr.
 			BadRequest("player %q in game %q gave invalid clue: %w", p.ID, g.ID, err).
 			WithMessage(fmt.Sprintf("failed to make move: %v", err))
 	}
-
-	releaseAt, cut, err := s.clues.Hold(g.ID)
-	if err != nil {
-		return httperr.
-			BadRequest("player %q in game %q gave a clue while one was already pending: %w", p.ID, g.ID, err).
-			WithMessage("your clue is already waiting to be sent to your operatives")
-	}
-
-	// Sit on the clue until the clue phase has run its minimum length, then
-	// commit and broadcast it from a background goroutine. Committing now and
-	// only delaying the broadcast would leak the clue to any operative who
-	// refetched the game state, and blocking the response for up to a minute
-	// would throw the clue away if the spymaster reloaded the page.
-	go s.releaseClue(g.ID, userPR.Team, clue, releaseAt, cut)
-
-	return jsonResp(w, struct {
-		Success bool `json:"success"`
-		// ReleaseAtMS is when the operatives will see this clue, as Unix
-		// milliseconds. Only ever sent to the spymaster who gave it.
-		ReleaseAtMS int64 `json:"release_at_ms"`
-	}{true, releaseAt.UnixMilli()})
-}
-
-// clueHoldResp describes a game's clue hold to its creator. DelayMS is the
-// server-wide setting, so a zero tells the UI there's no hold to switch on.
-type clueHoldResp struct {
-	Enabled bool  `json:"enabled"`
-	DelayMS int64 `json:"delay_ms"`
-}
-
-func (s *Srv) serveClueHold(w http.ResponseWriter, r *http.Request, p *codenames.Player, g *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
-	return jsonResp(w, clueHoldResp{
-		Enabled: s.clues.Enabled(g.ID),
-		DelayMS: s.clues.Delay().Milliseconds(),
-	})
-}
-
-func (s *Srv) serveSetClueHold(w http.ResponseWriter, r *http.Request, p *codenames.Player, g *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return httperr.BadRequest("failed to decode set clue hold request: %w", err)
-	}
-
-	// Switching the hold off releases a clue that's mid-hold, so the effect is
-	// immediate rather than one turn late.
-	enabled := s.clues.SetEnabled(g.ID, req.Enabled)
-	log.Printf("creator %q set the clue hold for game %q to %t", p.ID, g.ID, enabled)
-
-	// Deliberately not broadcast: the players other than the creator must not
-	// learn whether clues are being held.
-	return jsonResp(w, clueHoldResp{
-		Enabled: enabled,
-		DelayMS: s.clues.Delay().Milliseconds(),
-	})
-}
-
-// releaseClue waits out the remainder of the clue delay, then commits the clue
-// and sends it to the players. cut is closed if the game's hold is switched off
-// mid-wait, which releases the clue early. It runs detached from the request
-// that submitted the clue, so every failure has to be logged — there's no
-// response left to return an error on.
-func (s *Srv) releaseClue(gID codenames.GameID, team codenames.Team, clue *codenames.Clue, releaseAt time.Time, cut <-chan struct{}) {
-	defer s.clues.Done(gID)
-
-	if wait := time.Until(releaseAt); wait > 0 {
-		timer := time.NewTimer(wait)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-		case <-cut:
-			log.Printf("hold on clue %q for game %q was switched off, releasing early", clue, gID)
-		}
-	}
-
-	g, err := s.db.Game(gID)
-	if err != nil {
-		log.Printf("failed to load game %q to release clue %q: %v", gID, clue, err)
-		return
-	}
-
-	// The turn can't have moved on under us — that takes a guess, and the
-	// operatives have nothing to guess against yet — but the game can have
-	// ended some other way, at which point there's nobody to tell.
-	if g.Status != codenames.Playing || g.State.ActiveTeam != team || g.State.ActiveRole != codenames.SpymasterRole {
-		log.Printf("dropping held clue %q for game %q: it's now %q %q in a %q game", clue, gID, g.State.ActiveTeam, g.State.ActiveRole, g.Status)
-		return
-	}
-
-	prs, err := s.db.PlayersInGame(gID)
-	if err != nil {
-		log.Printf("failed to load players in game %q to release clue %q: %v", gID, clue, err)
-		return
-	}
-
-	// We don't need to check if the status changed/game is over, because giving
-	// a clue will never end the game.
-	newState, newStatus, err := game.NewForMove(g.State).Move(&game.Move{
-		Action:   game.ActionGiveClue,
-		Team:     team,
-		GiveClue: clue,
-	})
-	if err != nil {
-		log.Printf("held clue %q for game %q became invalid: %v", clue, gID, err)
-		return
-	}
-
-	// Update the state in the database.
-	if err := s.db.UpdateState(gID, newState, newStatus); err != nil {
-		log.Printf("failed to update state for game %q to release clue %q: %v", gID, clue, err)
-		return
-	}
 	g.State = newState
 	g.Status = newStatus
 
-	// Send the clue down to everyone.
+	if err := s.db.UpdateState(g.ID, newState, newStatus); err != nil {
+		return httperr.
+			Internal("failed to update state for game %q after clue %q: %w", g.ID, clue, err).
+			WithMessage("failed to update game state")
+	}
+
 	if err := s.broadcastMessage(g, prs, func(g *codenames.Game) any {
 		return &msgs.ClueGiven{
 			Clue: clue,
-			Team: team,
+			Team: userPR.Team,
 			Game: g,
 		}
 	}); err != nil {
-		log.Printf("failed to send clue %q for game %q: %v", clue, gID, err)
+		return httperr.
+			Internal("failed to send clue for game %q: %w", g.ID, err).
+			WithMessage("failed to inform players of clue")
 	}
+
+	return jsonResp(w, struct {
+		Success bool `json:"success"`
+	}{true})
 }
 
 func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Player, g *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
-	// Since we record votes and calculate consensus before making the move, we
-	// need to independently validate moves first.
+	// A tentative guess is broadcast but not applied, so turn and role are
+	// checked up front rather than relying on game.Move to catch it.
 	if userPR.Team != g.State.ActiveTeam {
 		return httperr.
 			BadRequest("player %q of team %q tried to guess when %q %q was active in game %q", p.ID, userPR.Team, g.State.ActiveTeam, g.State.ActiveRole, g.ID).
@@ -1260,7 +938,7 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 	}
 
 	if err := s.hub.ToGame(g.ID, &msgs.PlayerVote{
-		PlayerID:  sanitizePlayerID(p.ID),
+		PlayerID:  p.ID,
 		Guess:     req.Guess,
 		Confirmed: req.Confirmed,
 	}); err != nil {
@@ -1270,28 +948,17 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 	}
 
 	if !req.Confirmed {
-		// If it's not confirmed (e.g. it's just tentative), so we shouldn't count
-		// the votes.
+		// Tentative guesses are only broadcast so the UI can show what someone
+		// is considering. Nothing is applied until they confirm.
 		return jsonResp(w, struct {
 			Success bool `json:"success"`
 		}{true})
 	}
 
-	guess, hasConsensus := s.consensus.RecordVote(g.ID, p.ID, req.Guess, countVoters(prs, g.State.ActiveTeam))
-	if !hasConsensus {
-		return jsonResp(w, struct {
-			Success bool `json:"success"`
-		}{true})
-	}
-
-	if _, ok := findCard(g.State.Board.Cards, guess); !ok {
-		// This should probably never happen because if we have consensus, it
-		// should be *this* vote that caused it, but because HTTP requests are
-		// asynchronous, it could theoretically happen.
-		return httperr.
-			BadRequest("team %q guessed %q, which didn't correspond to a card in game %q", userPR.Team, req.Guess, g.ID).
-			WithMessage(fmt.Sprintf("guess %q didn't correspond to a card", guess))
-	}
+	// Each team seat holds exactly one operative, so a confirmed guess is the
+	// team's guess — there are no co-operatives left to agree with. (The study
+	// build put a strict-majority vote here for its multi-operative teams.)
+	guess := req.Guess
 
 	gfm := game.NewForMove(g.State)
 
@@ -1316,9 +983,6 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 			WithMessage(fmt.Sprintf("guess %q didn't correspond to a card", guess))
 	}
 
-	// They've made the guess, clear out the consensus for the next time.
-	s.consensus.Clear(g.ID)
-
 	// Update the state in the database.
 	if err := s.db.UpdateState(g.ID, newState, newStatus); err != nil {
 		return httperr.
@@ -1328,16 +992,6 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 
 	// Players can keep guessing if the game tells us its still their turn.
 	canKeepGuessing := newState.ActiveRole == codenames.OperativeRole && newStatus != codenames.Finished
-
-	// A guess that ended the turn hands the board to the other team's
-	// spymaster, so their clue phase — and the clock their clue is held
-	// against — starts here, before we tell anyone their turn is up.
-	switch {
-	case newStatus == codenames.Finished:
-		s.clues.Clear(g.ID)
-	case newState.ActiveRole == codenames.SpymasterRole:
-		s.clues.Start(g.ID)
-	}
 
 	if err := s.broadcastMessage(g, prs, func(g *codenames.Game) any {
 		return &msgs.GuessGiven{
@@ -1379,16 +1033,6 @@ func (s *Srv) serveGuess(w http.ResponseWriter, r *http.Request, p *codenames.Pl
 	return jsonResp(w, struct {
 		Success bool `json:"success"`
 	}{true})
-}
-
-func countVoters(prs []*codenames.PlayerRole, team codenames.Team) int {
-	cnt := 0
-	for _, pr := range prs {
-		if pr.Role == codenames.OperativeRole && pr.Team == team {
-			cnt++
-		}
-	}
-	return cnt
 }
 
 func (s *Srv) serveData(w http.ResponseWriter, r *http.Request, p *codenames.Player, game *codenames.Game, userPR *codenames.PlayerRole, prs []*codenames.PlayerRole) error {
@@ -1600,87 +1244,6 @@ func findRole(pID codenames.PlayerID, prs []*codenames.PlayerRole) (*codenames.P
 		}
 	}
 	return nil, false
-}
-
-// requireAdmin gates a handler behind the ADMIN_SECRET shared secret,
-// checked via the X-Admin-Secret header or an admin_secret query param.
-// This is intentionally the same shared-secret trust model as AUTH_SECRET
-// (no accounts) — it exists solely so a developer can review AI reasoning
-// and player types after a game, without any of that ever reaching players.
-func (s *Srv) requireAdmin(handler handlerFunc) handlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) error {
-		if s.adminSecret == "" {
-			return httperr.Forbidden("admin endpoints are disabled").WithMessage("admin endpoints are disabled")
-		}
-		got := r.Header.Get("X-Admin-Secret")
-		if got == "" {
-			got = r.URL.Query().Get("admin_secret")
-		}
-		if got != s.adminSecret {
-			return httperr.Forbidden("bad admin secret on request to %q", r.URL.Path).WithMessage("invalid admin secret")
-		}
-		return handler(w, r)
-	}
-}
-
-// adminPlayer is a player as reported to an admin — unlike msgs.Player, it
-// intentionally includes the real player type and, when available, which AI
-// backend the player used.
-type adminPlayer struct {
-	PlayerID codenames.PlayerID `json:"player_id"`
-	Name     string             `json:"name"`
-	Team     codenames.Team     `json:"team"`
-	Role     codenames.Role     `json:"role"`
-	Backend  string             `json:"backend,omitempty"`
-}
-
-func (s *Srv) serveAdminGameLog(w http.ResponseWriter, r *http.Request) error {
-	gID, err := s.gameIDFromRequest(r)
-	if err != nil {
-		return err
-	}
-
-	prs, err := s.db.PlayersInGame(gID)
-	if err != nil {
-		return httperr.Internal("failed to load players in game %q: %w", gID, err).WithMessage("failed to load players in game")
-	}
-
-	var ids []codenames.PlayerID
-	for _, pr := range prs {
-		ids = append(ids, pr.PlayerID)
-	}
-	names, err := s.db.BatchPlayerNames(ids)
-	if err != nil {
-		return httperr.Internal("failed to load player names: %w", err).WithMessage("failed to load player names")
-	}
-
-	entries, err := s.ai.GetReasoning(gID)
-	if err != nil {
-		return httperr.Internal("failed to fetch AI reasoning: %w", err).WithMessage("failed to fetch AI reasoning")
-	}
-
-	// Figure out which backend each team/role used, from whatever reasoning
-	// entries exist for them (there won't be any for human players).
-	backendFor := make(map[string]string) // "TEAM:ROLE" -> backend
-	for _, e := range entries {
-		backendFor[string(e.Team)+":"+string(e.Role)] = e.Backend
-	}
-
-	var players []*adminPlayer
-	for _, pr := range prs {
-		players = append(players, &adminPlayer{
-			PlayerID: pr.PlayerID,
-			Name:     names[pr.PlayerID],
-			Team:     pr.Team,
-			Role:     pr.Role,
-			Backend:  backendFor[string(pr.Team)+":"+string(pr.Role)],
-		})
-	}
-
-	return jsonResp(w, struct {
-		Players   []*adminPlayer            `json:"players"`
-		Reasoning []aiclient.ReasoningEntry `json:"reasoning"`
-	}{players, entries})
 }
 
 func (s *Srv) gameIDFromRequest(r *http.Request) (codenames.GameID, error) {

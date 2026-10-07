@@ -1,29 +1,10 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { gameStore } from '$lib/game.svelte';
 	import { Api } from '$lib/api';
 	import type { Team, Role, Player } from '$lib/types';
-	import ClueHoldToggle from './ClueHoldToggle.svelte';
 
 	const { game, players, user } = $derived(gameStore);
 	const api = new Api();
-
-	let backends = $state<string[]>([]);
-	// Selected backend per "team:role" slot. Empty string means use server default.
-	let selectedBackend = $state<Record<string, string>>({});
-
-	onMount(async () => {
-		try {
-			const res = await api.getAIBackends();
-			backends = res.backends ?? [];
-		} catch (e) {
-			console.warn('Failed to fetch AI backends', e);
-		}
-	});
-
-	function slotKey(team: Team, role: Role): string {
-		return `${team}:${role}`;
-	}
 
 	function getPlayers(team: Team, role: Role): Player[] {
 		return players.filter((p) => p.team === team && p.role === role);
@@ -38,11 +19,6 @@
 	// Surfaced above the teams — otherwise a failed lobby action rejects into the
 	// void and the page just sits there looking like nothing happened.
 	let actionError = $state<string | null>(null);
-
-	async function addAI(team: Team, role: Role) {
-		if (!game || !user || !gameStore.user) return;
-		await api.requestAI(game.id, team, role, selectedBackend[slotKey(team, role)] ?? '');
-	}
 
 	async function removePlayer(p: Player) {
 		if (!game) return;
@@ -121,8 +97,6 @@
 		</div>
 	{/if}
 
-	<ClueHoldToggle />
-
 	{#snippet joinButton(team: Team, role: Role, classes: string)}
 		<button
 			onclick={() => joinRole(team, role)}
@@ -133,33 +107,8 @@
 		</button>
 	{/snippet}
 
-	{#snippet aiButton(team: Team, role: Role, classes: string)}
-		{#if isCreator}
-			{#if backends.length > 1}
-				<select
-					bind:value={selectedBackend[slotKey(team, role)]}
-					class="rounded-sm border border-gray-300 bg-white px-1 py-1 text-xs font-bold text-gray-700"
-					title="AI backend"
-				>
-					<option value="">default</option>
-					{#each backends as b (b)}
-						<option value={b}>{b}</option>
-					{/each}
-				</select>
-			{/if}
-			<button
-				onclick={() => addAI(team, role)}
-				class="{classes} rounded-sm px-2 py-1 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50"
-				disabled={getPlayers(team, role).length > 0}
-			>
-				Add AI
-			</button>
-		{/if}
-	{/snippet}
-
 	{#snippet joinButtons(team: Team, role: Role, classes: string)}
 		<div class="flex gap-2">
-			{@render aiButton(team, role, classes)}
 			{@render joinButton(team, role, classes)}
 		</div>
 	{/snippet}

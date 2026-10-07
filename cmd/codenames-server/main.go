@@ -13,8 +13,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/bcspragu/Codenames/aiclient"
-	"github.com/bcspragu/Codenames/cluedelay"
 	"github.com/bcspragu/Codenames/cryptorand"
 	"github.com/bcspragu/Codenames/sqldb"
 	"github.com/bcspragu/Codenames/web"
@@ -42,20 +40,14 @@ func run(args []string) error {
 
 		hashKeyPath  = fSet.String("hash_key_path", "hashKey", "Path to the hash key for secure cookies")
 		blockKeyPath = fSet.String("block_key_path", "blockKey", "Path to the block key for secure cookies")
-
-		// AI server-related flags
-		authSecret       = fSet.String("auth_secret", "", "Secret string that acts as a 'password' for communicating with the AI server")
-		aiServerEndpoint = fSet.String("ai_server_endpoint", "", "The address to connect to the Codenames AI server")
-		logDir           = fSet.String("log_dir", "logs", "Directory to save game logs (CSV) after each game")
-		adminSecret      = fSet.String("admin_secret", "", "Secret string required (via X-Admin-Secret header or admin_secret query param) to access admin-only endpoints like the AI reasoning log. Admin endpoints are disabled if unset.")
-
-		clueDelay = fSet.Duration("clue_delay", cluedelay.DefaultDelay, "Minimum length of a spymaster's clue phase. A clue submitted sooner is held until the phase reaches this age, so an AI's response speed can't give it away. Set to 0 to release clues immediately.")
 	)
+	// ff.Parse handles both the command line and the environment. Calling
+	// flag.Parse() as well would re-parse os.Args against the *global*
+	// flagset, which knows none of these flags and so rejects any of them
+	// passed on the command line.
 	if err := ff.Parse(fSet, args[1:], ff.WithEnvVars()); err != nil {
 		return fmt.Errorf("failed to parse flags: %w", err)
 	}
-
-	flag.Parse()
 
 	r := rand.New(cryptorand.NewSource())
 	db, err := sqldb.New(*dbPath, r)
@@ -67,8 +59,6 @@ func run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load cookie keys: %w", err)
 	}
-
-	ai := aiclient.New(*authSecret, *aiServerEndpoint)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
@@ -82,7 +72,7 @@ func run(args []string) error {
 
 	log.Printf("Server is running on %q", *addr)
 
-	webSrv := web.New(db, r, sc, ai, *logDir, *adminSecret, web.WithClueDelay(*clueDelay))
+	webSrv := web.New(db, r, sc)
 	corsCfg := cors.New(cors.Options{
 		AllowOriginFunc: func(origin string) bool {
 			return true

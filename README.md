@@ -1,99 +1,90 @@
-# Codenames
+# Codenames Bot Competition
 
-Codenames is a hodgepodge of random components assembled over the course of several years, mostly related to playing the [Codenames](https://en.wikipedia.org/wiki/Codenames_(board_game)) board game.
+A platform for running a [Codenames](https://en.wikipedia.org/wiki/Codenames_(board_game))
+competition between student-written AI players.
 
-The main draw of this repo is the backend server (`./cmd/codenames-server`) + web frontend (`./frontend`) for playing Codenames, which is live on https://codenames.ai. The "AI" part of the name comes from the fact that this repo also includes AI players (`./cmd/ai-server`) — both a [Word2Vec](https://en.wikipedia.org/wiki/Word2vec)-based algorithmic player and an LLM-backed player (via [Ollama](https://ollama.com)). Both can play in the same game, so you can pit one against the other.
+Students do not upload code here. Each student runs their bot on their own
+machine; it connects to this server over a WebSocket using a join code, receives
+game state as JSON, and replies with a move as JSON. A bot can be anything —
+[Ollama](https://ollama.com), a paid API, hand-written Python — as long as it
+speaks the protocol.
 
-This repo also includes scraps of code for:
+The server is the referee. It validates every bot message against the schema and
+the rules of Codenames (a clue is one word, not a word on the board, with a
+number in range; a guess is an unrevealed board word, on the right turn),
+enforces a move timeout, and logs every message per game so students can debug
+their bots.
 
-- Playing a game of Codenames solo on your local computer against the backend server
-  - This is in `./cmd/codenames-client`
-- Parsing images of physical game boards using the [Cloud Vision API](https://cloud.google.com/vision/)
-  - This never really worked well and is almost certainly a solved problem using a modern VLM.
+Backend is Go; the host lobby and spectator view are Svelte 5 + TypeScript.
 
-Pretty much everything is written in Go, with the frontend in Svelte 5 + TypeScript
+> This branch (`codenames-competition`) is the competition. `master` holds the
+> separate AI Turing-test study and is left untouched.
+
+## Status
+
+| Phase | What | State |
+|---|---|---|
+| 1 | Cleanup — strip the study, our own AI players, and legacy tooling | ✅ done |
+| 2 | Protocol + referee | next |
+| 3 | Lobbies + bot WebSocket transport | |
+| 4 | Python student kit | |
+| 5 | Fly.io deploy | |
+
+`PLAN.md` has the architecture, the draft protocol, and the decisions behind it.
 
 ## Running Locally
 
-Make sure you have a recent version of Go + TypeScript installed. If you want to use the LLM player, also install [Ollama](https://ollama.com) and pull the default model (`ollama pull qwen3:30b-a3b` — a ~18GB download). Then:
+You need a recent Go and Node (with `pnpm`). There are no model files to
+download and no AI service to run.
 
 ```bash
-# Run the backend web server
-AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenames-server/
+# Terminal 1 — the game server, on :8080
+go run ./cmd/codenames-server/
 
-# In another terminal, run the frontend. (You can also use `npm` or tool of your choice)
+# Terminal 2 — the frontend dev server, on :5173
 cd frontend
 pnpm install   # first time only
 pnpm run dev
-
-# In a third terminal, run the AI server (only needed for AI games).
-# First, fetch the GloVe/ConceptNet models the w2v backend needs (skips any
-# already present; requires python3 to run the included conversion script):
-scripts/setup_models.sh
-
-# By default this loads BOTH the w2v and llm backends so you can pick which
-# one each AI player uses from the lobby UI. Note that the model paths should
-# be changed based on whatever model you download/train/use.
-GLOVE_MODEL_PATH=data/glove.bin \
-CONCEPT_NET_MODEL_PATH=data/conceptnet.bin \
-COMMON_WORDLIST=data/common_words_filtered.txt \
-AUTH_SECRET=abc123 \
-WEB_SERVER_ENDPOINT=http://localhost:8080 \
-ENABLED_BACKENDS=w2v,llm \
-DEFAULT_BACKEND=w2v \
-OLLAMA_ENDPOINT=http://localhost:11434 \
-go run ./cmd/ai-server/ --ollama_think=false
 ```
 
-From here, you can open a web browser to `http://localhost:5173` to start a game.
+Then open <http://localhost:5173>. The frontend proxies `/api` to the Go server,
+so everything is same-origin and the auth cookie survives.
 
-### Choosing an LLM
-
-`qwen3:30b-a3b` is the default model (`--ollama_model` / `OLLAMA_MODEL`). It's a mixture-of-experts model (~3B active parameters out of 30B), so it's considerably faster than a dense model of similar quality, and its reasoning can be turned off — that's what `--ollama_think=false` above does. With thinking off, clues and guesses come back in seconds rather than minutes; drop the flag (or pass `--ollama_think=true`) for a slower, more deliberate player. The prompts in `./llm/llm.go` adapt to the setting, and whatever reasoning the model does produce is logged to `logs/ai_reasoning.jsonl` either way.
-
-To use a different model, set `OLLAMA_MODEL` (or `--ollama_model`). Leave `--ollama_think` off entirely for a pure reasoning model like `qwq:32b`, which has no thinking toggle to set. Other tunables: `--ollama_max_tokens`, `--ollama_timeout`, `--ollama_temperature`, and `--ollama_seed` (fix the seed to make replies to identical prompts reproducible for research runs).
-
-### Running Locally via Docker Compose
-
-Alternatively, run the whole stack (web server, AI server, frontend) with Docker:
+### Via Docker Compose
 
 ```bash
 docker compose up --build
 ```
 
-Then open `http://localhost:5173`. Unlike the manual flow, you don't need Python (or anything besides Docker) installed for this: a `model-setup` service fetches and converts `data/glove.bin`/`data/conceptnet.bin` automatically the first time (it's skipped on later runs once the files exist) before `ai-server` starts. The first run downloads ~1.2GB of model data, so it can take a few minutes; `web-server` and `frontend` come up in parallel regardless.
+Starts the server (`:8080`) and the frontend dev server (`:5173`).
 
-To also enable the `llm` backend (requires [Ollama](https://ollama.com) running on your host):
+## Testing
 
 ```bash
-ENABLED_BACKENDS=w2v,llm docker compose up --build
+go build ./...
+go test ./...
+go vet ./...
+
+cd frontend && pnpm run check
 ```
 
-## AI Backends
+`pnpm run lint` reports 6 errors inherited from `master` that predate this work.
 
-The AI server supports two backends, configured via `ENABLED_BACKENDS` (comma-separated):
+## Layout
 
-| Backend | Description | Required env vars |
-|---|---|---|
-| `w2v` | Algorithmic player using GloVe + ConceptNet word embeddings | `GLOVE_MODEL_PATH`, `CONCEPT_NET_MODEL_PATH`, `COMMON_WORDLIST` |
-| `llm` | Large language model player via Ollama | `OLLAMA_ENDPOINT` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `qwen3:30b-a3b`) |
+```
+cmd/codenames-server/   the server binary
+codenames/              domain types, word list, clue legality rules
+game/                   the authoritative rules engine
+web/                    HTTP + WebSocket handlers
+hub/                    per-game WebSocket multiplexing
+sqldb/, memdb/          persistence and its test double
+boardgen/               board generation
+frontend/               SvelteKit host lobby + spectator view
+```
 
-`DEFAULT_BACKEND` selects which one is used when a caller doesn't specify (defaults to the first enabled backend, alphabetically). You can also enable just one — e.g. `ENABLED_BACKENDS=llm` skips loading the w2v models entirely.
+## Credits
 
-### Picking a backend per AI player
-
-In the game lobby, when the game creator clicks **Add AI** for a role, a small dropdown next to the button lets them pick which backend to use (`default`, `w2v`, or `llm`). This means you can stage matchups like w2v spymaster vs LLM spymaster on the same board.
-
-The available backends are exposed at `GET /api/ai/backends`, and the per-AI choice is sent as a `backend` field on `POST /api/game/{id}/requestAI`.
-
-### Spectating
-
-If you create a game without joining a role yourself, you'll spectate as a non-spymaster — useful for watching AI vs AI matches.
-
-### LLM prompts
-
-Prompts for clue-giving and guessing live in `./llm/llm.go`. The model gets the team's words, the opponent's words, bystanders, and the assassin, and is asked to respond in `WORD COUNT` format. Operative responses are validated against the board with up to 3 retries before falling back to a random unrevealed card.
-
-## Word2Vec Models
-
-See the docs in `./w2v/README.md` for more details on the Word2Vec setup.
+Built on [bcspragu/Codenames](https://github.com/bcspragu/Codenames) by Brandon
+Sprague, which supplies the game engine, the web server and the board rules this
+competition referees.

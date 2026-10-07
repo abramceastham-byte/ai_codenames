@@ -1,55 +1,48 @@
-# docker build -t registryext.bsprague.com/codenames -f Dockerfile.websrv .
-FROM golang:1.25.4 AS builder
+# docker build -t codenames-competition -f Dockerfile.websrv .
+#
+# Builds the SPA and the Go server into one image: the server serves the API,
+# the bot WebSocket and the static frontend on a single port, so a deployment
+# needs exactly one URL.
+FROM node:22-alpine AS frontend
 
-RUN adduser \
-  --disabled-password \
-  --gecos "" \
-  --home "/nonexistent" \
-  --shell "/sbin/nologin" \
-  --no-create-home \
-  --uid 65532 \
-  noroot
+WORKDIR /build/frontend
+RUN corepack enable
+
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml frontend/.npmrc ./
+RUN pnpm install --frozen-lockfile
+
+COPY frontend/ ./
+RUN pnpm run build
+
+FROM golang:1.25.4 AS builder
 
 WORKDIR /build
 
-# Copy dependency files first for caching
+# Dependency files first, so the module cache survives source edits.
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 
-# Copy the rest of the source code
-COPY cmd/codenames-server/ cmd/codenames-server/
-COPY aiclient/ aiclient/
+COPY cmd/ cmd/
 COPY boardgen/ boardgen/
-COPY cluedelay/ cluedelay/
 COPY codenames/ codenames/
-COPY consensus/ consensus/
 COPY cryptorand/ cryptorand/
-COPY dict/ dict/
 COPY game/ game/
 COPY httperr/ httperr/
 COPY hub/ hub/
+COPY memdb/ memdb/
 COPY msgs/ msgs/
-COPY names/ names/
 COPY sqldb/ sqldb/
 COPY web/ web/
 
-# Build the binary (statically linked)
 RUN CGO_ENABLED=0 GOOS=linux go build -o /server ./cmd/codenames-server
 
-FROM scratch
+FROM gcr.io/distroless/static-debian12:nonroot
 
 WORKDIR /app
 
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /etc/passwd /etc/passwd
-COPY --from=builder /etc/group /etc/group
-
-# Copy the binary
 COPY --from=builder /server /server
+COPY --from=frontend /build/frontend/build /app/static
 
-# Expose the port the app runs on
 EXPOSE 8080
 
-# Run the binary
 ENTRYPOINT ["/server"]

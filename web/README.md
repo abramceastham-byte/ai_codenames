@@ -1,7 +1,11 @@
 # Codenames API Server
 
-This directory holds the Codenames API server, which backs the ReactJS
-frontend.
+This directory holds the Codenames API server. It backs the browser frontend
+(host lobby + spectator view) over the REST and WebSocket API documented below.
+
+The **bot protocol** is a separate, versioned JSON protocol on its own
+WebSocket endpoint — bots do not use any of the REST endpoints here. It is
+drafted in `PLAN.md` §4 and lands in Phase 3.
 
 ## API
 
@@ -15,8 +19,7 @@ generally RESTful way. The endpoints are as follows:
   == Example Request ==
   POST /api/user
   {
-    "name": "Testy McTesterson",
-    "player_type": "HUMAN"
+    "name": "Testy McTesterson"
   }
 
   == Example Response ==
@@ -120,20 +123,6 @@ generally RESTful way. The endpoints are as follows:
   ]
   ```
 
-* `POST /api/game/{id}/requestAI` - Requests that an AI joins the given game.
-  Only available to the person who created the game, before the game is started.
-  ```
-  == Example Request ==
-  POST /api/game/TheGameID123/requestAI
-  {} // No body or anything
-
-  == Example Response ==
-  {
-    "success": true,
-    "robot_id": "robot_abc123"
-  }
-  ```
-
 * `POST /api/game/{id}/join` - Joins the game with the given ID. Users don't
   select roles, they just join games. The host will then assign roles to the
   users in a given game.
@@ -188,7 +177,8 @@ generally RESTful way. The endpoints are as follows:
   that the game is on.
 
 * `POST /api/game/{id}/clue` - Issues a clue, to be called by the active
-  spymaster.
+  spymaster. The clue is validated against the board (it may not be a board
+  word or an inflected form of one) and rejected with a non-200 if illegal.
   ```
   == Example Request ==
   POST /api/game/TheGameID123/clue
@@ -197,7 +187,8 @@ generally RESTful way. The endpoints are as follows:
   == Example Response ==
   {"success": true}
   ```
-  This will also send down a WebSocket message so that everyone gets the clue.
+  An accepted clue is applied and broadcast at once, so everyone gets it
+  immediately.
 
 
 * `POST /api/game/{id}/guess` - Issues a (tentative or confirmed) guess from an
@@ -211,10 +202,11 @@ generally RESTful way. The endpoints are as follows:
   {"success": true}
   ```
   The `"guess"` is the player's guess, from the cards still available on the
-  board. The `"confirmed"` indicates whether or not they're actually putting in
-  this vote, or just thinking about it. A guess will be selected once a
-  majority of operatives on the team confirm guesses. Non-confirmed guesses are
-  mostly so the UI can show what people are thinking.
+  board. `"confirmed": false` means the player is only considering it — the
+  guess is broadcast so the UI can show what they're thinking, but nothing is
+  applied. `"confirmed": true` applies it: each team seat holds exactly one
+  operative, so a confirmed guess is the team's guess. An empty `"guess"` is a
+  pass, which ends the turn.
 
 ## WebSockets
 
@@ -231,7 +223,7 @@ All of the messages sent over WebSockets are JSON-formatted, and take the form:
 }
 ```
 
-Look at the code in [web/msgs.go](/web/msgs.go) for details on fields and
+Look at the code in [msgs/msgs.go](/msgs/msgs.go) for details on fields and
 message structure, or look at the handy guide below:
 
 * `GAME_START`
@@ -282,7 +274,7 @@ message structure, or look at the handy guide below:
   {
     "action": "PLAYER_VOTE",
     "player_id": {
-      "player_type": "ROBOT",
+      "player_type": "HUMAN",
       "id": "abc123"
     },
     "guess": "blade",
