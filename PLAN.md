@@ -1,7 +1,7 @@
 # PLAN.md — Codenames Bot Competition
 
 Branch: `codenames-competition` (cut from `master`). Nothing in this plan touches
-`master`; all work lands here. No code is written or deleted until you approve.
+`master`; all work lands here. Approved 2026-10-07; Phase 1 is complete.
 
 ## Decisions locked in (2026-10-07)
 
@@ -13,9 +13,17 @@ Branch: `codenames-competition` (cut from `master`). Nothing in this plan touche
 | Q8 | **No existing deployment constrains anything** — build the tournament Fly app fresh. |
 | Q9 | **Prompt tuning preserved** as commit `8714b66` on branch `study/llm-prompt-tuning` (off `master`, not merged into it). |
 
-Still open: Q3 (clue counts), Q4 (move timeout), Q6 (human seats), Q7
-(tournament machinery), Q10 (kit distribution), Q11 (bot identity), Q12 (GitHub
-history scrub).
+Settled on the recommendations in §8, no further input needed:
+
+| # | Decision |
+|---|---|
+| Q3 | Clue counts restricted to `1 … (your unrevealed words)`; the official "zero"/"unlimited" clue is dropped. |
+| Q4 | Move timeout defaults to **60 s**, not 30 — a student's local Ollama needs the room — and is settable per game. |
+| Q6 | Human seats stay playable in the browser, so a student can play against their own bot. |
+| Q7 | Tournament scheduling, leaderboard and Elo are **out of scope for v1**; the `match_result` log record is shaped so a leaderboard can be built on it later. |
+| Q10 | `pip install -e kit/` from a clone, with PyPI as a later drop-in. |
+| Q11 | Join code plus a self-declared `bot_name`; the protocol reserves an optional `auth_token` in `hello` so per-student tokens need no v2. |
+| Q12 | **No history rewrite.** New commits carry no attribution trailer; the 13 existing ones are left alone. |
 
 ---
 
@@ -657,11 +665,37 @@ Each phase ends with `go build ./...`, `go vet ./...`, `go test ./...`,
 `pnpm run check && pnpm run lint` where the frontend changed, `pytest` where the
 kit changed, and one commit. All on `codenames-competition`.
 
-**Phase 1 — Cleanup.** Delete §3 (pending your answers to Q1–Q5, Q9). `go mod
-tidy`. Update `.gitignore`, `CLAUDE.md`, `AGENTS.md`, `README.md`,
-`docker-compose.yml`, `Dockerfile.websrv`. *Done when:* the tree builds, `go
-test ./...` is green (the pre-existing `llm` failure leaves with `llm/`), and
-the browser game still plays start to finish.
+**Phase 1 — Cleanup. ✅ DONE** (`ac4f8b0`, 80 files, +1,171 / −61,742).
+Deleted §3 in full. `go mod tidy` left 8 direct dependencies. Rewrote
+`.gitignore`, `CLAUDE.md`, `AGENTS.md`, `README.md`, `web/README.md`,
+`docker-compose.yml` and `Dockerfile.websrv` (which now builds the SPA into the
+server image, so one URL serves everything).
+
+Three changes beyond pure deletion, each forced by a removal:
+- `serveClue` applies and broadcasts a clue immediately, in place of the
+  `cluedelay` hold.
+- `serveGuess` applies a confirmed guess directly, in place of the `consensus`
+  majority vote — one operative per seat means there is nobody to agree with.
+- Players choose their own display name, in place of `names.Random`. Knowing
+  whose bot is whose is the point here, the opposite of the study's need.
+
+Also fixed a pre-existing bug: a stray `flag.Parse()` after `ff.Parse()`
+re-parsed `os.Args` against the global flagset, so the server rejected *any*
+command-line flag and only ever worked through environment variables. The
+compose file and the Fly deploy both pass flags, so this had to go.
+
+*Verified:* `go build ./...`, `go vet ./...`, `go test ./...` all pass (the
+pre-existing `llm` failure left with that package); `svelte-check` reports 0
+errors; and a full game plays start to finish over real HTTP — four players
+join, roles assign, a board word is refused as a clue with a clear 400, a legal
+clue lands, guesses reveal cards, and the game ends with a winner after 17
+moves.
+
+`pnpm run lint` still reports 6 errors, all inherited from `master` and all in
+lines this work did not touch (`svelte/prefer-svelte-reactivity` ×3,
+`no-explicit-any`, `prefer-const`, `no-navigation-without-resolve`). Phase 1
+removed one such error and added none. Flagged rather than fixed: two of the six
+would change runtime behaviour, which does not belong in a cleanup commit.
 
 **Phase 2 — Protocol + referee.** `protocol/v1/` with schemas, `referee/`,
 golden fixtures. *Done when:* unit tests play a full legal game through the
