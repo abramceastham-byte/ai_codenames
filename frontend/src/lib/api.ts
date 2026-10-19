@@ -1,4 +1,4 @@
-import type { Game, Player, Team, Role, PlayerID } from './types';
+import type { Game, Player, Team, Role } from './types';
 import { PUBLIC_API_URL } from '$env/static/public';
 
 export class Api {
@@ -8,7 +8,7 @@ export class Api {
 		this.fetch = fetch ?? window.fetch;
 	}
 
-	async post<T>(url: string, body: any): Promise<T> {
+	async post<T>(url: string, body: unknown): Promise<T> {
 		const res = await this.fetch(`${PUBLIC_API_URL}${url}`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },

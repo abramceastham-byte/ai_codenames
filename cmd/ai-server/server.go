@@ -60,7 +60,26 @@ func (s *Server) initMux() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/join", s.handleError(s.serveJoin))
 	mux.HandleFunc("/backends", s.handleError(s.serveBackends))
+	mux.HandleFunc("/healthz", s.handleError(s.serveHealth))
 	s.mux = mux
+}
+
+func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != http.MethodGet {
+		return httperr.MethodNotAllowed("call to healthz with bad method %q", r.Method)
+	}
+	for name, ai := range s.ais {
+		checker, ok := ai.(interface{ Health() error })
+		if !ok {
+			continue
+		}
+		if err := checker.Health(); err != nil {
+			return httperr.Internal("backend %q is unhealthy: %w", name, err).WithMessage("AI backend unavailable")
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok\n"))
+	return nil
 }
 
 func (s *Server) serveBackends(w http.ResponseWriter, r *http.Request) error {

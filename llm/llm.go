@@ -4,12 +4,14 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bcspragu/Codenames/codenames"
 )
@@ -19,10 +21,15 @@ import (
 type AI struct {
 	endpoint string // e.g. "http://localhost:11434"
 	model    string // e.g. "llama3"
+	client   *http.Client
 }
 
 func New(endpoint, model string) *AI {
-	return &AI{endpoint: endpoint, model: model}
+	return &AI{
+		endpoint: strings.TrimSuffix(endpoint, "/"),
+		model:    model,
+		client:   &http.Client{Timeout: 2 * time.Minute},
+	}
 }
 
 // Ollama chat API types
@@ -42,6 +49,33 @@ type chatResponse struct {
 	Message chatMessage `json:"message"`
 }
 
+// Health verifies that Ollama can resolve the configured model without
+// running inference.
+func (ai *AI) Health() error {
+	body, err := json.Marshal(struct {
+		Model string `json:"model"`
+	}{Model: ai.model})
+	if err != nil {
+		return fmt.Errorf("marshal health request: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ai.endpoint+"/api/show", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build health request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := ai.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("ollama health request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ollama model %q unavailable (status %d)", ai.model, resp.StatusCode)
+	}
+	return nil
+}
+
 func (ai *AI) chat(messages []chatMessage) (string, error) {
 	body, err := json.Marshal(chatRequest{
 		Model:    ai.model,
@@ -52,7 +86,7 @@ func (ai *AI) chat(messages []chatMessage) (string, error) {
 		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, err := http.Post(ai.endpoint+"/api/chat", "application/json", bytes.NewReader(body))
+	resp, err := ai.client.Post(ai.endpoint+"/api/chat", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("ollama request: %w", err)
 	}

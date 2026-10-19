@@ -15,7 +15,7 @@ import { Api } from '$lib/api';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { PUBLIC_API_URL } from '$env/static/public';
-import { SvelteMap } from 'svelte/reactivity';
+import { SvelteMap, SvelteURLSearchParams } from 'svelte/reactivity';
 
 export class GameStore {
 	api = new Api();
@@ -68,9 +68,9 @@ export class GameStore {
 		const res = await this.api.createUser();
 		if (res.success) {
 			this.user = { id: res.user_id, name: res.name };
-			const redirect = new URLSearchParams(window.location.search).get('redirect');
+			const redirect = new SvelteURLSearchParams(window.location.search).get('redirect');
 			if (redirect && redirect.startsWith('/')) {
-				await goto(redirect);
+				window.location.href = redirect;
 			} else {
 				await goto(resolve('/'));
 			}
@@ -138,7 +138,10 @@ export class GameStore {
 					this.lastClue = { ...msg.clue, team: msg.team };
 				}
 				this._teamClueCount[msg.team] = (this._teamClueCount[msg.team] ?? 0) + 1;
-				const clueRound = Math.max(this._teamClueCount['RED'] ?? 0, this._teamClueCount['BLUE'] ?? 0);
+				const clueRound = Math.max(
+					this._teamClueCount['RED'] ?? 0,
+					this._teamClueCount['BLUE'] ?? 0
+				);
 				this.history = [
 					...this.history,
 					{
@@ -198,11 +201,16 @@ export class GameStore {
 
 	private _agentToResult(agent: number | undefined): string {
 		switch (agent) {
-			case AGENT_RED: return 'red';
-			case AGENT_BLUE: return 'blue';
-			case AGENT_BYSTANDER: return 'bystander';
-			case AGENT_ASSASSIN: return 'assassin';
-			default: return '';
+			case AGENT_RED:
+				return 'red';
+			case AGENT_BLUE:
+				return 'blue';
+			case AGENT_BYSTANDER:
+				return 'bystander';
+			case AGENT_ASSASSIN:
+				return 'assassin';
+			default:
+				return '';
 		}
 	}
 

@@ -32,20 +32,36 @@ const (
 )
 
 type Srv struct {
-	sc        *securecookie.SecureCookie
-	hub       *hub.Hub
-	mux       *mux.Router
-	db        codenames.DB
-	r         *rand.Rand
-	ws        *websocket.Upgrader
-	consensus *consensus.Guesser
-	ai        *aiclient.Client
-	logDir    string
-	genName   func() string
+	sc            *securecookie.SecureCookie
+	hub           *hub.Hub
+	mux           *mux.Router
+	db            codenames.DB
+	r             *rand.Rand
+	ws            *websocket.Upgrader
+	consensus     *consensus.Guesser
+	ai            *aiclient.Client
+	logDir        string
+	genName       func() string
+	secureCookies bool
+}
+
+// Options controls browser-facing security settings. AllowedOrigins should
+// contain complete origins (scheme, host, and optional port).
+type Options struct {
+	AllowedOrigins []string
+	SecureCookies  bool
 }
 
 // New returns an initialized server.
-func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aiclient.Client, logDir string) *Srv {
+func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aiclient.Client, logDir string, options ...Options) *Srv {
+	opts := Options{}
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	allowedOrigins := make(map[string]struct{}, len(opts.AllowedOrigins))
+	for _, origin := range opts.AllowedOrigins {
+		allowedOrigins[strings.TrimSuffix(origin, "/")] = struct{}{}
+	}
 	s := &Srv{
 		sc:  sc,
 		hub: hub.New(),
@@ -53,13 +69,19 @@ func New(db codenames.DB, r *rand.Rand, sc *securecookie.SecureCookie, ai *aicli
 		r:   r,
 		ws: &websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
-				return true
+				origin := strings.TrimSuffix(r.Header.Get("Origin"), "/")
+				if origin == "" {
+					return true // Non-browser clients do not send Origin.
+				}
+				_, ok := allowedOrigins[origin]
+				return ok
 			},
 		},
-		consensus: consensus.New(),
-		ai:        ai,
-		logDir:    logDir,
-		genName:   names.Random,
+		consensus:     consensus.New(),
+		ai:            ai,
+		logDir:        logDir,
+		genName:       names.Random,
+		secureCookies: opts.SecureCookies,
 	}
 
 	s.mux = s.initMux()
@@ -276,7 +298,7 @@ func (s *Srv) serveCreatePlayer(w http.ResponseWriter, r *http.Request, pt coden
 		Name:     "Authorization",
 		Value:    encoded,
 		Path:     "/",
-		Secure:   false,
+		Secure:   s.secureCookies,
 		HttpOnly: true,
 		MaxAge:   60 * 60 * 24 * 365, // Cookie is good for a year.
 		SameSite: http.SameSiteLaxMode,

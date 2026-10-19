@@ -1,4 +1,14 @@
-# docker build -t registryext.bsprague.com/codenames -f Dockerfile.websrv .
+# docker build -t codenames-web -f Dockerfile.websrv .
+FROM node:22-alpine AS frontend
+RUN corepack enable
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY frontend/ ./
+ARG PUBLIC_API_URL=""
+ENV PUBLIC_API_URL=$PUBLIC_API_URL
+RUN pnpm run build
+
 FROM golang:1.25.4 AS builder
 
 RUN adduser \
@@ -28,26 +38,31 @@ COPY game/ game/
 COPY httperr/ httperr/
 COPY hub/ hub/
 COPY msgs/ msgs/
+COPY names/ names/
 COPY sqldb/ sqldb/
 COPY web/ web/
 
 # Build the binary (statically linked)
 RUN CGO_ENABLED=0 GOOS=linux go build -o /server ./cmd/codenames-server
 
-FROM scratch
+FROM alpine:3.22
+
+RUN apk add --no-cache ca-certificates
+RUN mkdir -p /state && chown noroot:noroot /state
 
 WORKDIR /app
 
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
 
 # Copy the binary
 COPY --from=builder /server /server
+COPY --from=frontend /build/frontend/build /app/frontend
 
 # Expose the port the app runs on
 EXPOSE 8080
+USER noroot
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
 
 # Run the binary
-ENTRYPOINT ["/server"]
+ENTRYPOINT ["/server", "--static_dir=/app/frontend"]

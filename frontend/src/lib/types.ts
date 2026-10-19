@@ -113,7 +113,7 @@ export interface LogEntry {
 	type: 'clue' | 'guess';
 	detail: string;
 	result: string; // 'red' | 'blue' | 'bystander' | 'assassin' | '' for clues
-	model: string;  // 'w2v' | 'llm' | 'human'
+	model: string; // 'w2v' | 'llm' | 'human'
 	durationMs: number;
 }
 

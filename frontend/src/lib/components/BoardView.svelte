@@ -8,6 +8,7 @@
 	import type { Card, PlayerVote } from '$lib/types';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { SvelteMap } from 'svelte/reactivity';
 
 	const { game, myPlayer, isMyTurn } = $derived(gameStore);
 	const api = new Api();
@@ -41,7 +42,7 @@
 	const redWon = $derived(game?.state.winning_team === 'RED');
 	const blueWon = $derived(game?.state.winning_team === 'BLUE');
 	const perCardVotes = $derived.by(() => {
-		const perCardV = new Map<string, PlayerVote[]>();
+		const perCardV = new SvelteMap<string, PlayerVote[]>();
 		gameStore.votes.forEach((pv) => {
 			const votes = perCardV.get(pv.guess) ?? [];
 			votes.push(pv);

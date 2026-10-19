@@ -141,6 +141,11 @@ func (s *DB) Close() error {
 	return s.sdb.Close()
 }
 
+// Ping verifies that the SQLite connection is usable.
+func (s *DB) Ping() error {
+	return s.sdb.Ping()
+}
+
 func (s *DB) NewGame(g *codenames.Game, private bool) (codenames.GameID, error) {
 	gsb, err := gameStateBytes(g.State)
 	if err != nil {
