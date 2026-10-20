@@ -1,5 +1,5 @@
-// Binary codenames-local allows playing a game on the command-line, including
-// using AI players.
+// Binary codenames-local allows playing a game on the command-line, with all
+// four roles entered on stdin.
 package main
 
 import (
@@ -15,8 +15,6 @@ import (
 	"github.com/bcspragu/Codenames/codenames"
 	"github.com/bcspragu/Codenames/game"
 	"github.com/bcspragu/Codenames/io"
-	"github.com/bcspragu/Codenames/llm"
-	"github.com/bcspragu/Codenames/w2v"
 )
 
 var (
@@ -34,24 +32,12 @@ var (
 
 func main() {
 	var (
-		gloveFile      = flag.String("glove_file", "glove.bin", "A binary-formatted GloVe word2vec model file.")
-		conceptNetFile = flag.String("concept_net_file", "conceptnet.bin", "A binary-formatted ConceptNet word2vec model file.")
-		commonWordlist = flag.String("common_wordlist", "common_words.txt", "Path to a common words file for AI clue generation.")
-		wordList       = flag.String("words", "", "Comma-separated list of words and the agent they're assigned to. Ex dog:red,wallet:blue,bowl:assassin,glass:blue,hood:bystander")
-		starter        = flag.String("starter", "red", "Which color team starts the game")
-		team           = flag.String("team", "red", "Team to be")
-		useAI          = flag.Bool("use_ai", false, "Whether or not the starting team should be an AI.")
-		aiBackend      = flag.String("ai_backend", "w2v", "AI backend to use: 'w2v' or 'llm'")
-		ollamaEndpoint = flag.String("ollama_endpoint", "http://localhost:11434", "Ollama API endpoint")
-		ollamaModel    = flag.String("ollama_model", "llama3", "Ollama model name")
+		wordList = flag.String("words", "", "Comma-separated list of words and the agent they're assigned to. Ex dog:red,wallet:blue,bowl:assassin,glass:blue,hood:bystander")
+		starter  = flag.String("starter", "red", "Which color team starts the game")
 	)
 	flag.Parse()
 
 	if err := validColor(*starter); err != nil {
-		log.Fatal(err)
-	}
-
-	if err := validColor(*team); err != nil {
 		log.Fatal(err)
 	}
 
@@ -76,41 +62,12 @@ func main() {
 	}
 
 	var (
-		sm codenames.Spymaster
-		op codenames.Operative
-	)
-	if *useAI {
-		switch *aiBackend {
-		case "w2v":
-			ai, err := w2v.New(*gloveFile, *conceptNetFile, *commonWordlist)
-			if err != nil {
-				log.Fatalf("Failed to initialize word2vec model: %v", err)
-			}
-			sm, op = ai, ai
-		case "llm":
-			ai := llm.New(*ollamaEndpoint, *ollamaModel)
-			sm, op = ai, ai
-		default:
-			log.Fatalf("Unknown AI backend %q, must be 'w2v' or 'llm'", *aiBackend)
-		}
-	}
-
-	var (
 		rsm codenames.Spymaster = &io.Spymaster{In: os.Stdin, Out: os.Stdout}
 		bsm codenames.Spymaster = &io.Spymaster{In: os.Stdin, Out: os.Stdout}
 
 		rop codenames.Operative = &io.Operative{In: os.Stdin, Out: os.Stdout, Team: codenames.RedTeam}
 		bop codenames.Operative = &io.Operative{In: os.Stdin, Out: os.Stdout, Team: codenames.BlueTeam}
 	)
-
-	if *useAI {
-		switch teamMap[*team] {
-		case codenames.RedTeam:
-			rsm, rop = sm, op
-		case codenames.BlueTeam:
-			bsm, bop = sm, op
-		}
-	}
 
 	g, err := game.New(b, teamMap[*starter], &game.Config{
 		RedSpymaster:  rsm,
