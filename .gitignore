@@ -17,3 +17,9 @@ embeddings/spymaster.bin
 embeddings/operative.bin
 logs/
 .env
+/ai-server
+/codenames-local
+/codenames-server
+bin/
+cmd/boardgen-cli/boardgen-cli
+__pycache__/
