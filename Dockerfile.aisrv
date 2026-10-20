@@ -1,4 +1,4 @@
-# docker build -t registryext.bsprague.com/codenames-ai -f Dockerfile.aisrv .
+# docker build -t codenames-ai -f Dockerfile.aisrv .
 FROM golang:1.25.4 AS builder
 
 RUN adduser \
@@ -22,9 +22,7 @@ COPY codenames/ codenames/
 COPY client/ client/
 COPY cryptorand/ cryptorand/
 COPY httperr/ httperr/
-COPY llm/ llm/
 COPY msgs/ msgs/
-COPY w2v/ w2v/
 
 # Build the binary (statically linked)
 RUN CGO_ENABLED=0 GOOS=linux go build -o /aiserver ./cmd/ai-server

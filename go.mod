@@ -5,7 +5,6 @@ go 1.24.0
 toolchain go1.24.2
 
 require (
-	code.sajari.com/word2vec v1.0.0
 	github.com/google/go-cmp v0.6.0
 	github.com/gorilla/mux v1.7.3
 	github.com/gorilla/securecookie v1.1.1
@@ -24,7 +23,6 @@ require (
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/ziutek/blas v0.0.0-20190227122918-da4ca23e90bb // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/sys v0.36.0 // indirect
 	modernc.org/libc v1.66.10 // indirect
