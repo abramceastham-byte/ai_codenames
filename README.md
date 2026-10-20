@@ -1,74 +1,98 @@
-# Codenames
+# Codenames Bot Tournament
 
-Codenames is a hodgepodge of random components assembled over the course of several years, mostly related to playing the [Codenames](https://en.wikipedia.org/wiki/Codenames_(board_game)) board game.
+This branch is a stripped-down version of our Codenames project for the class
+bot tournament. Students write a Codenames bot (a spymaster and an operative),
+and matches are run **locally on one machine**. There is no hosting, and no
+accounts beyond a name typed into the browser.
 
-The main draw of this repo is the backend server (`./cmd/codenames-server`) + web frontend (`./frontend`) for playing Codenames, which is live on https://codenames.ai. The "AI" part of the name comes from the fact that this repo also includes AI players (`./cmd/ai-server`) — both a [Word2Vec](https://en.wikipedia.org/wiki/Word2vec)-based algorithmic player and an LLM-backed player (via [Ollama](https://ollama.com)). Both can play in the same game, so you can pit one against the other.
+What's here:
 
-This repo also includes scraps of code for:
+- `cmd/codenames-server`: game server (REST + WebSocket, stores games in SQLite)
+- `frontend/`: browser UI for setting up and watching a game
+- `cmd/ai-server`: hosts the bots and joins them to games
+- `game/`, `codenames/`: the rules engine and core types
 
-- Playing a game of Codenames solo on your local computer against the backend server
-  - This is in `./cmd/codenames-client`
-- Parsing images of physical game boards using the [Cloud Vision API](https://cloud.google.com/vision/)
-  - This never really worked well and is almost certainly a solved problem using a modern VLM.
+## Install
 
-Pretty much everything is written in Go, with the frontend in Svelte 5 + TypeScript
-
-## Running Locally
-
-Make sure you have a recent version of Go + TypeScript installed. If you want to use the LLM player, also install [Ollama](https://ollama.com) and pull a model (e.g. `ollama pull llama3`). Then:
+You need **Go 1.24+**, **Node 20+**, and **pnpm** (`corepack enable` provides it).
 
 ```bash
-# Run the backend web server
-AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenames-server/
-
-# In another terminal, run the frontend. (You can also use `npm` or tool of your choice)
-cd frontend
-pnpm install   # first time only
-pnpm run dev
-
-# In a third terminal, run the AI server (only needed for AI games).
-# By default this loads BOTH the w2v and llm backends so you can pick which
-# one each AI player uses from the lobby UI. Note that the model paths should
-# be changed based on whatever model you download/train/use.
-GLOVE_MODEL_PATH=data/glove.bin \
-CONCEPT_NET_MODEL_PATH=data/conceptnet.bin \
-COMMON_WORDLIST=data/common_words.txt \
-AUTH_SECRET=abc123 \
-WEB_SERVER_ENDPOINT=http://localhost:8080 \
-ENABLED_BACKENDS=w2v,llm \
-DEFAULT_BACKEND=w2v \
-OLLAMA_ENDPOINT=http://localhost:11434 \
-OLLAMA_MODEL=llama3 \
-go run ./cmd/ai-server/
+git clone <repo-url> && cd ai_codenames
+cd frontend && pnpm install && cd ..
+go build ./...
 ```
 
-From here, you can open a web browser to `http://localhost:5173` to start a game.
+## Where the bot interface is defined
 
-## AI Backends
+A bot implements two Go interfaces from
+[`codenames/codenames.go`](codenames/codenames.go):
 
-The AI server supports two backends, configured via `ENABLED_BACKENDS` (comma-separated):
+```go
+type Spymaster interface {
+    // Sees the full board (all card colors) and returns a clue word + count.
+    GiveClue(*Board, Agent) (*Clue, error)
+}
 
-| Backend | Description | Required env vars |
-|---|---|---|
-| `w2v` | Algorithmic player using GloVe + ConceptNet word embeddings | `GLOVE_MODEL_PATH`, `CONCEPT_NET_MODEL_PATH`, `COMMON_WORDLIST` |
-| `llm` | Large language model player via Ollama | `OLLAMA_ENDPOINT` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `llama3`) |
+type Operative interface {
+    // Sees the board (colors of revealed cards only) and the clue,
+    // and returns the codename to guess.
+    Guess(*Board, *Clue) (string, error)
+}
+```
 
-`DEFAULT_BACKEND` selects which one is used when a caller doesn't specify (defaults to the first enabled backend, alphabetically). You can also enable just one — e.g. `ENABLED_BACKENDS=llm` skips loading the w2v models entirely.
+`Board`, `Card`, `Agent`, and `Clue` are defined in the same file. A tournament
+bot is a single type implementing both (`AI` in
+[`cmd/ai-server/server.go`](cmd/ai-server/server.go)). Optionally, it can also
+implement `GuessOrPass(board, clue, mustGuess bool) (string, error)` and return
+`codenames.PassGuess` to end its turn early.
 
-### Picking a backend per AI player
+### Registering a bot
 
-In the game lobby, when the game creator clicks **Add AI** for a role, a small dropdown next to the button lets them pick which backend to use (`default`, `w2v`, or `llm`). This means you can stage matchups like w2v spymaster vs LLM spymaster on the same board.
+Add it to the `backends` map in
+[`cmd/ai-server/main.go`](cmd/ai-server/main.go):
 
-The available backends are exposed at `GET /api/ai/backends`, and the per-AI choice is sent as a `backend` field on `POST /api/game/{id}/requestAI`.
+```go
+var backends = map[string]func() (AI, error){
+    "team-alpha": func() (AI, error) { return alpha.New(), nil },
+    "team-beta":  func() (AI, error) { return beta.New(), nil },
+}
+```
 
-### Spectating
+The map starts out **empty**, so the AI server won't start until at least
+one bot is registered. Bots join games under their registered name.
 
-If you create a game without joining a role yourself, you'll spectate as a non-spymaster — useful for watching AI vs AI matches.
+## Running one match between two bots
 
-### LLM prompts
+Open three terminals in the repo root.
 
-Prompts for clue-giving and guessing live in `./llm/llm.go`. The model gets the team's words, the opponent's words, bystanders, and the assassin, and is asked to respond in `WORD COUNT` format. Operative responses are validated against the board with up to 3 retries before falling back to a random unrevealed card.
+```bash
+# 1. Game server (port 8080)
+AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenames-server/
 
-## Word2Vec Models
+# 2. Bot server (port 8081)
+AUTH_SECRET=abc123 WEB_SERVER_ENDPOINT=http://localhost:8080 go run ./cmd/ai-server/
 
-See the docs in `./w2v/README.md` for more details on the Word2Vec setup.
+# 3. Frontend (port 5173)
+cd frontend && pnpm run dev
+```
+
+Then:
+
+1. Open http://localhost:5173, enter any name, and create a game.
+2. For each of the four seats, click **Add AI** and pick a bot from the dropdown
+   (for example, `team-alpha` for both Red seats and `team-beta` for both Blue seats).
+3. Start the game. The bots play automatically. The board and game log update live.
+
+When a game finishes, its log is written as CSV to `logs/` (use `--log_dir` to change this).
+
+### Quick sanity check without bots
+
+`./cmd/codenames-local/run_local.sh` plays a game in the terminal, with all four
+roles typed on stdin.
+
+## Development
+
+```bash
+go build ./... && go vet ./... && go test ./...
+cd frontend && pnpm run check
+```

@@ -7,7 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Codenames is a full-stack implementation of the Codenames board game with:
 - **Go backend** (game server + AI server)
 - **Svelte 5 frontend** (SvelteKit, Tailwind CSS v4)
-- **Word2Vec-based AI** players using GloVe and ConceptNet models
+- An **AI server** that hosts tournament bots (registered in `cmd/ai-server/main.go`)
+
+This branch is for a class bot tournament run locally. See README.md.
 
 ## Dev Commands
 
@@ -43,20 +45,11 @@ AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenam
 # Terminal 2 — frontend (port 5173)
 cd frontend && pnpm run dev
 
-# Terminal 3 — AI server (port 8081, requires model files)
-GLOVE_MODEL_PATH=data/glove.bin \
-CONCEPT_NET_MODEL_PATH=data/conceptnet.bin \
-COMMON_WORDLIST=data/common_words.txt \
-AUTH_SECRET=abc123 \
-WEB_SERVER_ENDPOINT=http://localhost:8080 \
-ENABLED_BACKENDS=w2v,llm \
-DEFAULT_BACKEND=w2v \
-OLLAMA_ENDPOINT=http://localhost:11434 \
-OLLAMA_MODEL=llama3 \
-go run ./cmd/ai-server/
+# Terminal 3 — AI server (port 8081, requires at least one registered bot)
+AUTH_SECRET=abc123 WEB_SERVER_ENDPOINT=http://localhost:8080 go run ./cmd/ai-server/
 ```
 
-Then open `http://localhost:5173`. The `llm` backend requires [Ollama](https://ollama.com) running with the model pulled (e.g. `ollama pull llama3`); drop `llm` from `ENABLED_BACKENDS` if you only want the w2v player.
+Then open `http://localhost:5173`.
 
 ## Architecture
 
@@ -74,7 +67,7 @@ Both modes use the `Spymaster` and `Operative` interfaces, making AI and human p
 
 **Storage:** `sqldb/` implements `codenames.DB` with SQLite. `memdb/` provides an in-memory implementation used in tests.
 
-**AI:** `w2v/` implements `Spymaster` and `Operative` using dual Word2Vec models (GloVe + ConceptNet). Scoring applies count bonuses and multi-word penalties. `aiclient/` is the HTTP client the web server uses to call the AI server.
+**AI:** `cmd/ai-server` hosts bots registered in its `backends` map; each implements `Spymaster` and `Operative`. `aiclient/` is the HTTP client the web server uses to call the AI server.
 
 **Consensus:** `consensus/` tracks operative votes — a strict majority (>50%) is required to finalize a guess in multiplayer games.
 
@@ -95,13 +88,8 @@ SvelteKit is configured as a fully static SPA (`adapter-static`, `fallback: '200
 | `AUTH_SECRET` | both servers | Shared secret for inter-service auth |
 | `AI_SERVER_ENDPOINT` | web server | URL of AI service |
 | `WEB_SERVER_ENDPOINT` | AI server | URL of web service |
-| `GLOVE_MODEL_PATH` | AI server | GloVe Word2Vec binary |
-| `CONCEPT_NET_MODEL_PATH` | AI server | ConceptNet Word2Vec binary |
-| `COMMON_WORDLIST` | AI server | Common words file for operative guessing |
-| `ENABLED_BACKENDS` | AI server | Comma-separated backends to load (`w2v`, `llm`) |
-| `DEFAULT_BACKEND` | AI server | Backend used when caller doesn't specify |
-| `OLLAMA_ENDPOINT` | AI server | Ollama URL for the `llm` backend (default `http://localhost:11434`) |
-| `OLLAMA_MODEL` | AI server | Ollama model name for the `llm` backend (default `llama3`) |
+| `ENABLED_BACKENDS` | AI server | Comma-separated bots to load (default: all registered) |
+| `DEFAULT_BACKEND` | AI server | Bot used when caller doesn't specify |
 
 The web server also accepts `--addr` (default `:8080`), `--db_path` (default `codenames.db`), and `--hash_key_path`/`--block_key_path` for secure cookie keys (auto-generated if missing).
 
