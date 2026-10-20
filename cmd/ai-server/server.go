@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
@@ -178,11 +179,11 @@ func (s *Server) serveJoin(w http.ResponseWriter, r *http.Request) error {
 		return httperr.Internal("failed to init Codenames client: %w", err)
 	}
 
-	// The web server assigns every player (human or AI) a random generated
-	// name, so we don't send one.
-	pID, err := c.CreateUser("", codenames.PlayerTypeRobot)
+	// Robots are named after their backend so it's clear which bot is which.
+	name := fmt.Sprintf("%s-%d", backendName, s.r.Intn(10000))
+	pID, err := c.CreateUser(name, codenames.PlayerTypeRobot)
 	if err != nil {
-		return httperr.Internal("failed to create AI user: %w", err)
+		return httperr.Internal("failed to create user %q: %w", name, err)
 	}
 	rID := codenames.RobotID(pID)
 

@@ -64,8 +64,8 @@ export class GameStore {
 		}
 	}
 
-	async login() {
-		const res = await this.api.createUser();
+	async login(name: string) {
+		const res = await this.api.createUser(name);
 		if (res.success) {
 			this.user = { id: res.user_id, name: res.name };
 			const redirect = new SvelteURLSearchParams(window.location.search).get('redirect');

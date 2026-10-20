@@ -346,15 +346,6 @@ func setup() *testEnv {
 		"",  /* logDir, not used in tests */
 	)
 
-	// The server assigns every player a generated name. Make them
-	// deterministic ("Test0", "Test1", ...) so expectations are stable.
-	var nameCount int
-	srv.genName = func() string {
-		name := fmt.Sprintf("Test%d", nameCount)
-		nameCount++
-		return name
-	}
-
 	return &testEnv{
 		db:  db,
 		srv: srv,
