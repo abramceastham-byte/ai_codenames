@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/bcspragu/Codenames/client"
 	"github.com/bcspragu/Codenames/codenames"
@@ -322,7 +321,6 @@ func (s *Server) playGame(ai AI, c *client.Client, gID codenames.GameID, rID cod
 }
 
 func (s *Server) giveClue(ai AI, b *codenames.Board, agent codenames.Agent) (*codenames.Clue, error) {
-	start := time.Now()
 	clue, err := ai.GiveClue(b, agent)
 	if err != nil {
 		log.Printf("[ERROR] AI failed to make a clue: %v", err)
@@ -332,17 +330,7 @@ func (s *Server) giveClue(ai AI, b *codenames.Board, agent codenames.Agent) (*co
 		}
 	}
 
-	humanThinkDelay(start, 8*time.Second, 25*time.Second)
 	return clue, nil
-}
-
-// humanThinkDelay sleeps until the total time elapsed since start falls
-// somewhere in [min, max), so AI responses don't arrive at inhuman speed.
-func humanThinkDelay(start time.Time, min, max time.Duration) {
-	target := min + time.Duration(rand.Int63n(int64(max-min)))
-	if remaining := target - time.Since(start); remaining > 0 {
-		time.Sleep(remaining)
-	}
 }
 
 func toAgent(team codenames.Team) codenames.Agent {
@@ -367,7 +355,6 @@ type passingOperative interface {
 // follow-up guesses, where the AI may pass. A pass is sent to the web server
 // as an empty guess, which ends the turn.
 func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue, mustGuess bool) (string, error) {
-	start := time.Now()
 	var (
 		guess string
 		err   error
@@ -383,7 +370,6 @@ func (s *Server) guess(ai AI, b *codenames.Board, clue *codenames.Clue, mustGues
 	} else if guess == codenames.PassGuess {
 		guess = ""
 	}
-	humanThinkDelay(start, 3*time.Second, 15*time.Second)
 	return guess, err
 }
 
