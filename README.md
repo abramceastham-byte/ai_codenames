@@ -24,42 +24,22 @@ go build ./...
 
 ## Where the bot interface is defined
 
-A bot implements two Go interfaces from
-[`codenames/codenames.go`](codenames/codenames.go):
+Students write bots as **standalone executables in any language**. For each
+move, the engine starts the bot, writes one JSON request to its stdin, and reads
+one JSON response from its stdout.
 
-```go
-type Spymaster interface {
-    // Sees the full board (all card colors) and returns a clue word + count.
-    GiveClue(*Board, Agent) (*Clue, error)
-}
+- [`BOT_GUIDE.md`](BOT_GUIDE.md): the guide for students (examples, legal-clue rules, timeouts, forfeits)
+- [`botproto/schema.json`](botproto/schema.json): the formal JSON Schema
+- [`botproto/botproto.go`](botproto/botproto.go): the same protocol as Go structs, plus clue validation
+- [`botproto/match.go`](botproto/match.go): `RunMatch` plays one game between two students' bots
+- [`examples/python/`](examples/python): a minimal spymaster and operative to use as a template
 
-type Operative interface {
-    // Sees the board (colors of revealed cards only) and the clue,
-    // and returns the codename to guess.
-    Guess(*Board, *Clue) (string, error)
-}
-```
+`go test ./botproto/` plays full games between the example bots. It needs `python3`.
 
-`Board`, `Card`, `Agent`, and `Clue` are defined in the same file. A tournament
-bot is a single type implementing both (`AI` in
-[`cmd/ai-server/server.go`](cmd/ai-server/server.go)). Optionally, it can also
-implement `GuessOrPass(board, clue, mustGuess bool) (string, error)` and return
-`codenames.PassGuess` to end its turn early.
-
-### Registering a bot
-
-Add it to the `backends` map in
-[`cmd/ai-server/main.go`](cmd/ai-server/main.go):
-
-```go
-var backends = map[string]func() (AI, error){
-    "team-alpha": func() (AI, error) { return alpha.New(), nil },
-    "team-beta":  func() (AI, error) { return beta.New(), nil },
-}
-```
-
-The map starts out **empty**, so the AI server won't start until at least
-one bot is registered. Bots join games under their registered name.
+The browser flow below uses the older in-process Go bot interface
+(`Spymaster`/`Operative` in [`codenames/codenames.go`](codenames/codenames.go),
+registered in [`cmd/ai-server/main.go`](cmd/ai-server/main.go)). It does not
+run JSON bots yet.
 
 ## Running one match between two bots
 

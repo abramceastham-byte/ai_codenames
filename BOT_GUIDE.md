@@ -5,6 +5,9 @@ You'll build **two programs**: a **spymaster** that gives clues and an
 any approach: your own code, a local model through Ollama, or an outside API.
 The only requirement is that they follow the protocol below.
 
+**Start from the examples** in [`examples/python/`](examples/python): `spymaster.py`
+and `operative.py` follow the protocol and play legal (random) moves.
+
 The formal definition is [`botproto/schema.json`](botproto/schema.json). If this
 guide and the schema ever disagree, the schema is correct.
 
@@ -171,6 +174,6 @@ If a game reaches **50 turns** without a winner, the team with **fewer of its ow
 
 ## Tips
 
-- Test your bot by hand before the tournament: `python my_spymaster.py < sample_request.json`
+- Test your bot by hand before the tournament: save a request to a file and run `python3 my_spymaster.py < request.json`
 - Python's interpreter startup takes about 50 ms. Loading a large model on every move could easily exceed 10 s, so cache or precompute where you can, or keep a separate server running that your bot talks to.
 - If you call an outside API, set your own timeout below 10 s and fall back to a safe answer, such as a count-1 clue or an empty guess list.
