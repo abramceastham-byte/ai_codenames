@@ -72,7 +72,7 @@
 				<input
 					id="clue-count"
 					type="number"
-					min="0"
+					min="1"
 					max="9"
 					bind:value={clueCount}
 					class="w-full rounded border border-gray-300 p-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"

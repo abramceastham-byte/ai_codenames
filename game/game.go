@@ -113,6 +113,9 @@ type Action string
 const (
 	ActionGiveClue = Action("GIVE_CLUE")
 	ActionGuess    = Action("GUESS")
+	// ActionForfeit ends the active team's turn from either role, e.g. when a
+	// bot fails to make a legal move.
+	ActionForfeit = Action("FORFEIT")
 )
 
 type Move struct {
@@ -134,6 +137,9 @@ func (g *Game) Move(mv *Move) (*codenames.GameState, codenames.GameStatus, error
 		if mv.GiveClue == nil {
 			return nil, "", errors.New("no clue was given")
 		}
+		if mv.GiveClue.Count < 1 {
+			return nil, "", fmt.Errorf("clue count must be at least 1, got %d", mv.GiveClue.Count)
+		}
 		g.handleGiveClue(mv.GiveClue)
 	case ActionGuess:
 		if g.state.ActiveRole != codenames.OperativeRole {
@@ -147,6 +153,8 @@ func (g *Game) Move(mv *Move) (*codenames.GameState, codenames.GameStatus, error
 				return nil, "", fmt.Errorf("handleGuess(%q): %w", mv.Guess, err)
 			}
 		}
+	case ActionForfeit:
+		g.endTurn()
 	default:
 		return nil, "", fmt.Errorf("unknown action %q", mv.Action)
 	}
@@ -160,10 +168,8 @@ func (g *Game) Move(mv *Move) (*codenames.GameState, codenames.GameStatus, error
 }
 
 func (g *Game) handleGiveClue(clue *codenames.Clue) {
-	numGuesses := clue.Count
-	if numGuesses == 0 {
-		numGuesses = -1
-	}
+	// Operatives get one bonus guess beyond the clue's count.
+	numGuesses := clue.Count + 1
 
 	g.state.Clues = append(g.state.Clues, codenames.SpymasterClue{
 		Clue: *clue,
