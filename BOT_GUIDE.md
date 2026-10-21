@@ -5,11 +5,17 @@ You'll build **two programs**: a **spymaster** that gives clues and an
 any approach: your own code, a local model through Ollama, or an outside API.
 The only requirement is that they follow the protocol below.
 
-**Start from the examples** in [`examples/python/`](examples/python): `spymaster.py`
-and `operative.py` follow the protocol and play legal (random) moves.
+**Start from the examples** in [`examples/`](examples):
 
-The formal definition is [`botproto/schema.json`](botproto/schema.json). If this
-guide and the schema ever disagree, the schema is correct.
+- [`examples/python/spymaster.py`](examples/python/spymaster.py) and
+  [`operative.py`](examples/python/operative.py): minimal bots that follow the protocol and play legal (random) moves
+- [`examples/wordlist.txt`](examples/wordlist.txt): **the official word list**. Every board word comes from these 400 words.
+- [`examples/sample_spymaster_request.json`](examples/sample_spymaster_request.json) and
+  [`sample_operative_request.json`](examples/sample_operative_request.json): complete 25-card requests
+  from a real game, for testing your bot by hand (see [Test your bot](#test-your-bot))
+
+The formal definition of the protocol is [`botproto/schema.json`](botproto/schema.json), and you're
+welcome to read it. If this guide and the schema ever disagree, the schema is correct.
 
 ## How your bot is run
 
@@ -21,15 +27,26 @@ For **every move**, the engine:
 4. waits for the program to exit.
 
 - You have **10 seconds** per move, counted from start to exit. The professor may change this for the tournament.
-- Write **only** the JSON response to stdout. Send debug output to **stderr**. The engine saves stderr to the match log, which helps with debugging.
+- Write **only** the JSON response to stdout. Send debug output to **stderr**.
+  The engine saves stderr in the match log **only when a move fails** (a crash, timeout, bad JSON, or illegal move).
+  To see debug output from moves that succeed, run your bot by hand (see [Test your bot](#test-your-bot)).
 - Your program is stateless between moves. Everything you need is in the request, including the full history of the game.
 - Responses larger than 64 KB are rejected.
+- Your bot is started from the **root of the tournament repo**, not from your bot's folder. If it opens files that
+  ship with it (a word list, a model), build the path from the script's own location instead of the current directory.
+  In Python, that's `os.path.join(os.path.dirname(os.path.abspath(__file__)), "words.txt")`.
 
 ## The board
 
 There are 25 cards, listed row by row (index 0 is top-left, index 24 is bottom-right).
 Every card has a hidden type: `red`, `blue`, `bystander`, or `assassin`.
-The team that starts has 9 cards, the other team has 8, and there are 7 bystanders and 1 assassin.
+The team that starts (`starting_team` in every request) has 9 cards, the other team has 8,
+and there are 7 bystanders and 1 assassin.
+
+Board words always come from [`examples/wordlist.txt`](examples/wordlist.txt), and are always **lowercase**.
+Four of them are two words joined by an **underscore**: `ice_cream`, `loch_ness`, `new_york`, and `scuba_diver`.
+Guess them exactly as written, with the underscore. The clue overlap rule below applies to them too,
+so `cream`, `york`, and `diver` are illegal clues while those cards are unrevealed.
 
 A team wins by revealing all of its own cards. A team **loses immediately** if it reveals the assassin.
 
@@ -89,12 +106,16 @@ A clue is legal only if **all** of the following are true:
 
 An illegal clue **forfeits the turn** (see [Errors and timeouts](#errors-and-timeouts)).
 
+The engine checks rules 1–4 automatically. The [fair play rules](#fair-play) below are checked by the professor.
+
 ## Operative
 
 ### Request
 
 The operative sees the same board, but **`type` is missing on unrevealed cards**.
-It also gets the clue for this turn and how many guesses it may make (**count + 1**).
+It also gets the clue for this turn and `guesses_allowed`, which is always **count + 1**.
+That means one bonus guess, as in the board game. A spymaster may give a count larger than
+the number of cards its team has left. It's legal, but it only gives the operative more chances to hit a wrong card.
 
 ```json
 {
@@ -140,7 +161,7 @@ counts as a **forfeit**. To stop early, just list fewer guesses than `guesses_al
 The engine reveals your guesses one at a time, in order. It stops at the first of these:
 
 - a guess reveals a card that **isn't your team's color** (turn ends; if it's the assassin, you lose),
-- you've used `guesses_allowed` guesses (extra guesses are ignored),
+- you've used `guesses_allowed` guesses (extra guesses are ignored, not penalized),
 - your list runs out,
 - the game ends.
 
@@ -171,8 +192,64 @@ Every failure is written to the match log along with your stderr.
 
 If a game reaches **50 turns** without a winner, the team with **more forfeits loses**. If both teams have the same number of forfeits, the team with **fewer of its own cards left** wins, and if that's also equal, it's a draw.
 
+**There's no way to skip a turn.** Your operative must guess at least once every turn, and giving a
+filler clue on purpose breaks the [fair play rules](#fair-play). Every forfeit also counts against you if
+the game reaches the turn limit, so a bot that stalls is very likely to lose.
+
+## Fair play
+
+Breaking either rule means **disqualification**.
+
+1. **Clues must be real words used for their meaning.** Use ordinary English words you'd find in a
+   dictionary, chosen because they relate to your team's words. Made-up words, codes, and words chosen
+   for their spelling, length, or position on the board are not allowed (e.g. "a clue starting with `c`
+   means guess the third card").
+2. **Your spymaster and operative must not communicate during a game.** They may share code and data you
+   prepare in advance, such as a word list or a model. During a game, though, the only thing the operative
+   may learn from the spymaster is the clue itself. That means no writing files for the other bot to read,
+   no sockets or shared servers that pass game information between them, and no hidden messages in clues.
+
+If you aren't sure whether something is allowed, ask the professor before the tournament.
+
+## Test your bot
+
+You **don't** need Node, pnpm, or the web frontend. You need:
+
+- **Go 1.24 or newer** (https://go.dev/dl/), to run matches
+- whatever your bot needs, e.g. **Python 3**
+
+**1. Run each bot by hand** with a sample request. This shows your stderr debug output too:
+
+```bash
+python3 my_bot/spymaster.py < examples/sample_spymaster_request.json
+python3 my_bot/operative.py < examples/sample_operative_request.json
+```
+
+Check that stdout is a single JSON object, like `{"clue": "metal", "count": 2}` or `{"guesses": ["mercury"]}`.
+
+**2. Play a full match against the example bots**, from the root of the repo:
+
+```bash
+go run ./cmd/match \
+  --red_name me \
+  --red_spymaster "python3 my_bot/spymaster.py" \
+  --red_operative "python3 my_bot/operative.py" \
+  --blue_name example \
+  --blue_spymaster "python3 examples/python/spymaster.py" \
+  --blue_operative "python3 examples/python/operative.py"
+```
+
+It prints the winner and any forfeits. To see why a move failed, look for `"type":"forfeit"` lines in the
+log file it names, which include your stderr. To watch the game step by step, run:
+`go run ./cmd/replay <log file>`.
+
+**On Windows:**
+
+- `python3` often doesn't exist. Use `python` or `py` in the commands instead (`py my_bot/spymaster.py`).
+- `\` at the end of a line only works in bash. In PowerShell or cmd, put the whole command on one line.
+- Bot command paths can't contain spaces, even in quotes, so keep your bot in a folder without spaces in its path.
+
 ## Tips
 
-- Test your bot by hand before the tournament: save a request to a file and run `python3 my_spymaster.py < request.json`
-- Python's interpreter startup takes about 50 ms. Loading a large model on every move could easily exceed 10 s, so cache or precompute where you can, or keep a separate server running that your bot talks to.
-- If you call an outside API, set your own timeout below 10 s and fall back to a safe answer, such as a count-1 clue or an empty guess list.
+- Python's interpreter startup takes about 50 ms. Loading a large model on every move could easily exceed 10 s, so precompute what you can and load only what you need.
+- If you call an outside API, set your own timeout below 10 s and fall back to a safe answer, such as a count-1 clue or a single guess you're most confident in.

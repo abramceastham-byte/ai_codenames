@@ -14,7 +14,10 @@ What's here:
 
 ## Install
 
-You need **Go 1.24+**, **Node 20+**, and **pnpm** (`corepack enable` provides it).
+To run bot matches (`cmd/match`, `cmd/replay`), you only need **Go 1.24+** and whatever the bots
+are written in (e.g. Python 3). Students should follow [Test your bot](BOT_GUIDE.md#test-your-bot) in the bot guide.
+
+The browser UI additionally needs **Node 20+** and **pnpm** (`corepack enable` provides it).
 
 ```bash
 git clone <repo-url> && cd ai_codenames
