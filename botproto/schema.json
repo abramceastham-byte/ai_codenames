@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "codenames-bot-protocol-v1",
+  "title": "Codenames tournament bot protocol, version 1",
+  "description": "The engine writes one Request to the bot's stdin; the bot writes one SpymasterResponse or OperativeResponse to stdout. Mirrors botproto/botproto.go.",
+  "$defs": {
+    "Team": { "enum": ["red", "blue"] },
+    "CardType": { "enum": ["red", "blue", "bystander", "assassin"] },
+    "Card": {
+      "type": "object",
+      "required": ["word", "revealed"],
+      "properties": {
+        "word": { "type": "string" },
+        "type": {
+          "$ref": "#/$defs/CardType",
+          "description": "Always present for spymasters. For operatives, present only once revealed."
+        },
+        "revealed": { "type": "boolean" },
+        "revealed_by": {
+          "$ref": "#/$defs/Team",
+          "description": "Present only when revealed."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Clue": {
+      "type": "object",
+      "required": ["word", "count"],
+      "properties": {
+        "word": { "type": "string" },
+        "count": { "type": "integer", "minimum": 1, "maximum": 9 }
+      },
+      "additionalProperties": false
+    },
+    "Turn": {
+      "type": "object",
+      "required": ["team", "clue", "guesses", "end"],
+      "properties": {
+        "team": { "$ref": "#/$defs/Team" },
+        "clue": {
+          "oneOf": [{ "$ref": "#/$defs/Clue" }, { "type": "null" }],
+          "description": "null when the spymaster forfeited."
+        },
+        "guesses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["word", "result"],
+            "properties": {
+              "word": { "type": "string" },
+              "result": { "$ref": "#/$defs/CardType" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "end": {
+          "enum": [
+            "wrong_card",
+            "out_of_guesses",
+            "stopped",
+            "game_over",
+            "spymaster_forfeit",
+            "operative_forfeit"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Request": {
+      "type": "object",
+      "required": ["protocol_version", "role", "team", "board", "history"],
+      "properties": {
+        "protocol_version": { "const": 1 },
+        "role": { "enum": ["spymaster", "operative"] },
+        "team": { "$ref": "#/$defs/Team" },
+        "board": {
+          "type": "array",
+          "minItems": 25,
+          "maxItems": 25,
+          "items": { "$ref": "#/$defs/Card" },
+          "description": "Row-major 5x5, index 0 is top-left."
+        },
+        "history": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Turn" },
+          "description": "All completed turns, oldest first."
+        },
+        "clue": {
+          "$ref": "#/$defs/Clue",
+          "description": "Operatives only: your spymaster's clue for this turn."
+        },
+        "guesses_allowed": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 10,
+          "description": "Operatives only: clue count + 1."
+        }
+      },
+      "if": { "properties": { "role": { "const": "operative" } } },
+      "then": { "required": ["clue", "guesses_allowed"] },
+      "additionalProperties": false
+    },
+    "SpymasterResponse": {
+      "type": "object",
+      "required": ["clue", "count"],
+      "properties": {
+        "clue": { "type": "string", "pattern": "^[A-Za-z]{1,30}$" },
+        "count": { "type": "integer", "minimum": 1, "maximum": 9 }
+      }
+    },
+    "OperativeResponse": {
+      "type": "object",
+      "required": ["guesses"],
+      "properties": {
+        "guesses": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "In order. Empty list passes."
+        }
+      }
+    }
+  }
+}
