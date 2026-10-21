@@ -44,14 +44,55 @@ THEMES = [
 
 THEMES = [(clues, set(words.split())) for clues, words in THEMES]
 
+# One related clue word for each board word that no theme covers, built from
+# the official word list (examples/wordlist.txt).
+ASSOCIATIONS = dict(pair.split(":") for pair in """
+agent:secret air:breathe alien:extraterrestrial amazon:rainforest aztec:empire
+band:musicians bar:pub bark:woof beach:sand beat:rhythm bed:sleep
+bermuda:caribbean block:lego board:plank bolt:lightning bond:james
+boom:explosion box:cardboard bridge:river buck:deer bugle:trumpet
+button:shirt capital:uppercase cast:actors cell:prison center:middle
+chair:seat chest:treasure circle:circumference compound:chemical
+conductor:orchestra contract:signature cotton:fabric cover:blanket
+crash:collision cross:crucifix cycle:bicycle dance:ballet date:romance
+day:sunlight death:grave degree:diploma dinosaur:fossil draft:breeze
+drop:plummet egypt:nile face:smile fair:carnival fan:supporter
+fence:barrier fighter:boxer figure:silhouette fire:flame game:puzzle
+gas:petrol genius:brilliant grace:elegance green:emerald ground:soil
+head:skull hole:dig horseshoe:magnet ivory:elephant kid:child
+lawyer:attorney life:alive light:lamp line:queue litter:trash
+loch_ness:scotland lock:combination log:timber luck:fortune mail:envelope
+mammoth:woolly marble:granite march:parade mass:weight match:ignite
+mine:quarry model:catwalk net:mesh night:darkness ninja:stealth
+novel:fiction oil:petroleum parachute:skydive park:playground part:piece
+pass:overtake paste:glue pilot:cockpit pipe:plumbing pit:hollow play:drama
+plot:storyline point:arrow pole:totem post:parcel press:newspaper
+ray:beam revolution:uprising ring:wedding robot:android rock:boulder
+roulette:wheel round:sphere satellite:orbit saturn:titan scale:balance
+shadow:silhouette shakespeare:sonnet shop:store shot:injection
+skyscraper:tall slip:banana snowman:frosty soldier:army soul:spirit
+sound:noise spell:wizard spike:thorn spine:vertebra spot:dot
+square:rectangle staff:employees state:province stick:twig straw:drinking
+suit:tuxedo swing:hammock table:furniture tag:label tail:wag tick:clock
+time:hour torch:flashlight triangle:geometry trip:journey trunk:luggage
+tube:subway turkey:thanksgiving undertaker:funeral vacuum:dust water:drink
+wake:alarm wall:brick war:battle washer:laundry watch:wrist whip:lash
+yard:lawn force:strength plastic:polymer row:paddle
+""".split())
+
+# Every clue we might give, as (clue words to try, board words it points to):
+# the themes plus one single-word entry per association.
+CANDIDATES = THEMES + [([clue], {word}) for word, clue in ASSOCIATIONS.items()]
+
 
 def theme_for_clue(clue):
-    """Returns the board words for a clue word, or an empty set."""
+    """Returns the board words a clue word points to, or an empty set."""
     clue = clue.lower()
-    for clues, words in THEMES:
+    out = set()
+    for clues, words in CANDIDATES:
         if clue in clues:
-            return words
-    return set()
+            out |= words
+    return out
 
 
 def theme_count(word):
