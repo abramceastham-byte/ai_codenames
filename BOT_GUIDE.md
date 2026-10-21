@@ -32,9 +32,36 @@ For **every move**, the engine:
   To see debug output from moves that succeed, run your bot by hand (see [Test your bot](#test-your-bot)).
 - Your program is stateless between moves. Everything you need is in the request, including the full history of the game.
 - Responses larger than 64 KB are rejected.
-- Your bot is started from the **root of the tournament repo**, not from your bot's folder. If it opens files that
-  ship with it (a word list, a model), build the path from the script's own location instead of the current directory.
-  In Python, that's `os.path.join(os.path.dirname(os.path.abspath(__file__)), "words.txt")`.
+- Your bot runs with **your team folder as the working directory**, so `open("words.txt")` finds a file
+  next to your script. To be safe no matter how it's started, you can build paths from the script's own
+  location instead: in Python, `os.path.join(os.path.dirname(os.path.abspath(__file__)), "words.txt")`.
+
+## Submitting your team
+
+Your team is one folder, **`students/<team>/`**. The folder name is your team name, and it can't contain spaces.
+
+**Python:** put `spymaster.py` and `operative.py` in the folder. That's all. They're run with
+`python3` (or `python` if `python3` doesn't work on the machine).
+
+```
+students/my_team/
+  spymaster.py
+  operative.py
+  words.txt        <- any files your bots need
+```
+
+**Any other language** (or Python with a different file layout): add a **`team.json`** with the command
+for each bot. Commands are split on spaces and run from inside your team folder, not through a shell:
+
+```json
+{"spymaster": "node spymaster.js", "operative": "./operative"}
+```
+
+Other examples: `"java -jar spymaster.jar"`, `"./target/release/spymaster"`, `"python3 src/spymaster.py"`.
+If you ship a compiled program, make sure it runs on the professor's machine, or ask what they'll use.
+
+If your folder is missing a file or names a program that isn't installed, the match won't start. The error
+names your team and the missing file or program, so check it before you submit (see [Test your bot](#test-your-bot)).
 
 ## The board
 
@@ -190,7 +217,7 @@ Every failure is written to the match log along with your stderr.
 | **Operative** times out, crashes, sends invalid JSON, or sends an empty guess list | Turn **forfeited**. No guesses are made. `"end": "operative_forfeit"` |
 | **Operative** guesses a word that isn't on the board, is already revealed, or is repeated | Guesses before it **still count**. The bad guess and everything after it are dropped, and the turn ends with `"end": "operative_forfeit"`. |
 
-If a game reaches **50 turns** without a winner, the team with **more forfeits loses**. If both teams have the same number of forfeits, the team with **fewer of its own cards left** wins, and if that's also equal, it's a draw.
+If a game reaches **50 turns** without a winner, it's a **draw if no cards were revealed at all**. Otherwise the team with **more forfeits loses**. If both teams have the same number of forfeits, the team with **fewer of its own cards left** wins, and if that's also equal, it's a draw.
 
 **There's no way to skip a turn.** Your operative must guess at least once every turn. Every forfeit
 counts against you if the game reaches the turn limit, so a bot that stalls is very likely to lose.
@@ -223,36 +250,43 @@ You **don't** need Node, pnpm, or the web frontend. You need:
 - **Go 1.24 or newer** (https://go.dev/dl/), to run matches
 - whatever your bot needs, e.g. **Python 3**
 
+Put your bot in `students/<your team>/` first (see [Submitting your team](#submitting-your-team)).
+These examples use a team called `my_team`.
+
 **1. Run each bot by hand** with a sample request. This shows your stderr debug output too:
 
 ```bash
-python3 my_bot/spymaster.py < examples/sample_spymaster_request.json
-python3 my_bot/operative.py < examples/sample_operative_request.json
+cd students/my_team
+python3 spymaster.py < ../../examples/sample_spymaster_request.json
+python3 operative.py < ../../examples/sample_operative_request.json
+cd ../..
 ```
 
 Check that stdout is a single JSON object, like `{"clue": "metal", "count": 2}` or `{"guesses": ["mercury"]}`.
 
-**2. Play a full match against the example bots**, from the root of the repo:
+**2. Play a match** against one of the example teams, from the root of the repo:
 
 ```bash
-go run ./cmd/match \
-  --red_name me \
-  --red_spymaster "python3 my_bot/spymaster.py" \
-  --red_operative "python3 my_bot/operative.py" \
-  --blue_name example \
-  --blue_spymaster "python3 examples/python/spymaster.py" \
-  --blue_operative "python3 examples/python/operative.py"
+go run ./cmd/match my_team test_student
 ```
 
-It prints the winner and any forfeits. To see why a move failed, look for `"type":"forfeit"` lines in the
-log file it names, which include your stderr. To watch the game step by step, run:
-`go run ./cmd/replay <log file>`.
+It prints the winner and any forfeits. If your folder is set up wrong, it stops right away and says what's
+missing. To see why a move failed during the game, look for `"type":"forfeit"` lines in the log file it
+names, which include your stderr. To watch the game step by step, run `go run ./cmd/replay <log file>`.
+
+**3. Run a mini tournament** against every team in `students/`:
+
+```bash
+go run ./cmd/tournament
+```
 
 **On Windows:**
 
-- `python3` often doesn't exist. Use `python` or `py` in the commands instead (`py my_bot/spymaster.py`).
-- `\` at the end of a line only works in bash. In PowerShell or cmd, put the whole command on one line.
-- Bot command paths can't contain spaces, even in quotes, so keep your bot in a folder without spaces in its path.
+- In step 1, `python3` often doesn't work. Use `python` or `py` instead. Matches pick a working Python
+  automatically for teams without a `team.json`.
+- If you write a `team.json` for Python, use `"python spymaster.py"`, or whatever works on the professor's
+  machine. If you're unsure, leave `team.json` out.
+- Paths in `team.json` can't contain spaces, even in quotes.
 
 ## Tips
 
