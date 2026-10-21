@@ -4,6 +4,9 @@ import (
 	"context"
 	"math/rand"
 	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,13 +71,13 @@ func TestRunMatchForfeits(t *testing.T) {
 		bad     Player
 		wantEnd TurnEnd
 	}{
-		{"bad json", Player{Name: "x", Spymaster: script(`print("not json")`)}, EndSpymasterForfeit},
+		{"bad json", Player{Name: "x", Spymaster: script(`print("not json")`), Operative: good.Operative}, EndSpymasterForfeit},
 		{"illegal clue", Player{Name: "x", Spymaster: script(`
 import json, sys
 req = json.load(sys.stdin)
-print(json.dumps({"clue": req["board"][0]["word"], "count": 1}))`)}, EndSpymasterForfeit},
-		{"timeout", Player{Name: "x", Spymaster: script(`import time; time.sleep(10)`)}, EndSpymasterForfeit},
-		{"crash", Player{Name: "x", Spymaster: script(`import sys; print("boom", file=sys.stderr); sys.exit(1)`)}, EndSpymasterForfeit},
+print(json.dumps({"clue": req["board"][0]["word"], "count": 1}))`), Operative: good.Operative}, EndSpymasterForfeit},
+		{"timeout", Player{Name: "x", Spymaster: script(`import time; time.sleep(10)`), Operative: good.Operative}, EndSpymasterForfeit},
+		{"crash", Player{Name: "x", Spymaster: script(`import sys; print("boom", file=sys.stderr); sys.exit(1)`), Operative: good.Operative}, EndSpymasterForfeit},
 		{"guess not on board", Player{
 			Name:      "x",
 			Spymaster: good.Spymaster,
@@ -143,9 +146,10 @@ print(json.dumps({"guesses": [next(c["word"] for c in req["board"] if not c["rev
 	}{
 		{"crashing red loses", crashing, steady, TeamBlue, TiebreakForfeits},
 		{"crashing blue loses", steady, crashing, TeamRed, TiebreakForfeits},
-		// Equal forfeits, no cards revealed, and red starts with 9 cards to
-		// blue's 8.
-		{"cards left", stalling, stalling, TeamBlue, TiebreakCardsLeft},
+		// Equal forfeits and no cards revealed: a draw.
+		{"no cards revealed", stalling, stalling, "", TiebreakNoCards},
+		// No forfeits; decided by cards left. The winner depends on the board.
+		{"cards left", steady, steady, cardsLeftWinner(safeBoard()), TiebreakCardsLeft},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -160,13 +164,71 @@ print(json.dumps({"guesses": [next(c["word"] for c in req["board"] if not c["rev
 	}
 }
 
-// safeBoard returns a board whose first two cards aren't the assassin, so the
-// steady team's first guesses can't end the game early.
+// safeBoard returns a board whose first four cards aren't the assassin, so
+// the steady teams' guesses in a 4-turn game can't end it early.
 func safeBoard() *codenames.Board {
 	for seed := int64(1); ; seed++ {
 		b := boardgen.New(codenames.RedTeam, rand.New(rand.NewSource(seed)))
-		if b.Cards[0].Agent != codenames.Assassin && b.Cards[1].Agent != codenames.Assassin {
+		if !slices.ContainsFunc(b.Cards[:4], func(c codenames.Card) bool { return c.Agent == codenames.Assassin }) {
 			return b
 		}
+	}
+}
+
+// cardsLeftWinner is who wins a 4-turn steady-vs-steady game on b, where
+// the first four cards get revealed.
+func cardsLeftWinner(b *codenames.Board) Team {
+	left := map[codenames.Agent]int{codenames.RedAgent: 9, codenames.BlueAgent: 8}
+	for _, c := range b.Cards[:4] {
+		left[c.Agent]--
+	}
+	switch {
+	case left[codenames.RedAgent] < left[codenames.BlueAgent]:
+		return TeamRed
+	case left[codenames.BlueAgent] < left[codenames.RedAgent]:
+		return TeamBlue
+	}
+	return ""
+}
+
+func TestRunMatchChecksCommands(t *testing.T) {
+	py := requirePython(t)
+	good := examplePlayer(py, "good")
+	board := safeBoard()
+
+	tests := []struct {
+		name    string
+		bad     Player
+		wantErr string
+	}{
+		{"missing program", Player{Name: "x", Spymaster: []string{"no-such-program-xyz"}, Operative: good.Operative}, `team "x" spymaster: program "no-such-program-xyz" not found`},
+		{"missing script", Player{Name: "x", Spymaster: good.Spymaster, Operative: []string{py, "nope.py"}}, `team "x" operative: file "nope.py" not found`},
+		{"missing relative program", Player{Name: "x", Spymaster: []string{"./bot"}, Operative: good.Operative, Dir: t.TempDir()}, `program "./bot" not found`},
+		{"no command", Player{Name: "x", Spymaster: good.Spymaster}, `team "x" operative: no command given`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := RunMatch(context.Background(), tt.bad, good, board, codenames.RedTeam, Options{})
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("got error %v, want one containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// Scripts are found relative to a player's Dir.
+func TestRunMatchPlayerDir(t *testing.T) {
+	py := requirePython(t)
+	ex, err := filepath.Abs("../examples/python")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := Player{Name: "dir", Spymaster: []string{py, "spymaster.py"}, Operative: []string{py, "operative.py"}, Dir: ex}
+	res, err := RunMatch(context.Background(), p, p, safeBoard(), codenames.RedTeam, Options{MaxTurns: 2})
+	if err != nil {
+		t.Fatalf("RunMatch: %v", err)
+	}
+	if len(res.Events) != 0 {
+		t.Errorf("bots in Dir failed: %+v", res.Events)
 	}
 }

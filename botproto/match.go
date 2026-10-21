@@ -2,12 +2,15 @@ package botproto
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,11 +22,14 @@ import (
 const maxStderrBytes = 4 * 1024
 
 // Player is one student's pair of bot executables. Each command is an argv,
-// e.g. []string{"python3", "bots/alice/spymaster.py"}.
+// e.g. []string{"python3", "spymaster.py"}.
 type Player struct {
 	Name      string   `json:"name"`
 	Spymaster []string `json:"spymaster"`
 	Operative []string `json:"operative"`
+	// Dir is the working directory for this player's bots, and the base for
+	// relative paths in its commands. Empty means Options.Dir.
+	Dir string `json:"dir,omitempty"`
 }
 
 // Options tunes a match. The zero value uses the defaults.
@@ -53,7 +59,8 @@ type Result struct {
 	// Reason explains how the game ended.
 	Reason string `json:"reason"`
 	// Tiebreak is the rule that decided a game that hit the turn limit
-	// (TiebreakForfeits or TiebreakCardsLeft), and empty otherwise.
+	// (TiebreakNoCards, TiebreakForfeits, or TiebreakCardsLeft), and empty
+	// otherwise.
 	Tiebreak string  `json:"tiebreak,omitempty"`
 	History  []Turn  `json:"history"`
 	Events   []Event `json:"events"`
@@ -61,10 +68,20 @@ type Result struct {
 	Board []Card `json:"board"`
 }
 
-// RunMatch plays one game between two players on the given board. It only
-// returns an error if the engine itself fails; bot failures are forfeits
-// recorded in Result.Events.
+// RunMatch plays one game between two players on the given board. Before
+// playing, it checks that every bot command can be found, and returns an
+// error if not. After that it only returns an error if the engine itself
+// fails; bot failures are forfeits recorded in Result.Events.
 func RunMatch(ctx context.Context, red, blue Player, board *codenames.Board, starter codenames.Team, opts Options) (*Result, error) {
+	for _, p := range []Player{red, blue} {
+		dir := cmp.Or(p.Dir, opts.Dir)
+		if err := CheckCommand(p.Spymaster, dir); err != nil {
+			return nil, fmt.Errorf("team %q spymaster: %w", p.Name, err)
+		}
+		if err := CheckCommand(p.Operative, dir); err != nil {
+			return nil, fmt.Errorf("team %q operative: %w", p.Name, err)
+		}
+	}
 	if opts.MoveTimeout == 0 {
 		opts.MoveTimeout = DefaultMoveTimeout
 	}
@@ -103,9 +120,13 @@ func RunMatch(ctx context.Context, red, blue Player, board *codenames.Board, sta
 		}
 	}
 
-	// Turn limit: the team with more forfeits loses, then fewer cards left wins.
+	// Turn limit: a draw if no cards were revealed at all, otherwise the team
+	// with more forfeits loses, then fewer cards left wins.
 	redForfeits, blueForfeits := m.forfeits(TeamRed), m.forfeits(TeamBlue)
-	if redForfeits != blueForfeits {
+	if m.numRevealed() == 0 {
+		m.res.Tiebreak = TiebreakNoCards
+		m.res.Reason = "turn limit reached with no cards revealed: draw"
+	} else if redForfeits != blueForfeits {
 		m.res.Tiebreak = TiebreakForfeits
 		m.res.Winner = TeamRed
 		if redForfeits > blueForfeits {
@@ -128,6 +149,8 @@ func RunMatch(ctx context.Context, red, blue Player, board *codenames.Board, sta
 }
 
 const (
+	// TiebreakNoCards: neither team revealed a card, so it's a draw.
+	TiebreakNoCards = "no_cards_revealed"
 	// TiebreakForfeits: the team with more forfeits lost.
 	TiebreakForfeits = "forfeits"
 	// TiebreakCardsLeft: forfeits were equal, so the team with fewer of its
@@ -152,7 +175,8 @@ func (m *match) playTurn(ctx context.Context) (bool, error) {
 
 	// Spymaster
 	var sr SpymasterResponse
-	err := m.ask(ctx, player.Spymaster, m.request(RoleSpymaster, nil), &sr)
+	dir := cmp.Or(player.Dir, m.opts.Dir)
+	err := m.ask(ctx, player.Spymaster, dir, m.request(RoleSpymaster, nil), &sr)
 	if err == nil {
 		err = ValidateClue(sr, CardsFromBoard(m.state.Board, true))
 	}
@@ -173,7 +197,7 @@ func (m *match) playTurn(ctx context.Context) (bool, error) {
 
 	// Operative
 	var or OperativeResponse
-	if err := m.ask(ctx, player.Operative, m.request(RoleOperative, clue), &or); err != nil {
+	if err := m.ask(ctx, player.Operative, dir, m.request(RoleOperative, clue), &or); err != nil {
 		m.logFailure(team, RoleOperative, player.Name, err)
 		turn.End = EndOperativeForfeit
 		return false, m.forfeit()
@@ -267,7 +291,7 @@ type botError struct {
 func (e *botError) Error() string { return e.err.Error() }
 
 // ask runs one bot process, sends it req, and decodes its response into out.
-func (m *match) ask(ctx context.Context, argv []string, req *Request, out any) error {
+func (m *match) ask(ctx context.Context, argv []string, dir string, req *Request, out any) error {
 	if len(argv) == 0 {
 		return errors.New("no command configured")
 	}
@@ -281,8 +305,8 @@ func (m *match) ask(ctx context.Context, argv []string, req *Request, out any) e
 
 	var stdout, stderr limitedBuffer
 	stdout.max, stderr.max = MaxResponseBytes, maxStderrBytes
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Dir = m.opts.Dir
+	cmd := exec.CommandContext(ctx, programPath(argv[0], dir), argv[1:]...)
+	cmd.Dir = dir
 	cmd.Stdin = bytes.NewReader(in)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	// Don't wait forever on pipes held open by a bot's child processes.
@@ -316,6 +340,16 @@ func (m *match) logFailure(team Team, role Role, bot string, err error) {
 		ev.Stderr = be.stderr
 	}
 	m.res.Events = append(m.res.Events, ev)
+}
+
+func (m *match) numRevealed() int {
+	n := 0
+	for _, c := range m.state.Board.Cards {
+		if c.Revealed {
+			n++
+		}
+	}
+	return n
 }
 
 func (m *match) revealed(agent codenames.Agent) bool {
@@ -410,4 +444,52 @@ func ownAgent(t Team) codenames.Agent {
 		return codenames.BlueAgent
 	}
 	return codenames.RedAgent
+}
+
+// CheckCommand reports whether a bot command can be run from dir: the
+// program must exist (on PATH, or as a path relative to dir), and if the
+// first argument looks like a script file (e.g. "spymaster.py"), it must
+// exist too.
+func CheckCommand(argv []string, dir string) error {
+	if len(argv) == 0 {
+		return errors.New("no command given")
+	}
+	prog := argv[0]
+	if hasSeparator(prog) {
+		if _, err := os.Stat(programPath(prog, dir)); err != nil {
+			return fmt.Errorf("program %q not found in %s", prog, displayDir(dir))
+		}
+	} else if _, err := exec.LookPath(prog); err != nil {
+		return fmt.Errorf("program %q not found; is it installed and on your PATH?", prog)
+	}
+	if len(argv) > 1 && !strings.HasPrefix(argv[1], "-") && filepath.Ext(argv[1]) != "" {
+		script := argv[1]
+		if !filepath.IsAbs(script) {
+			script = filepath.Join(dir, script)
+		}
+		if _, err := os.Stat(script); err != nil {
+			return fmt.Errorf("file %q not found in %s", argv[1], displayDir(dir))
+		}
+	}
+	return nil
+}
+
+// programPath resolves a program given as a relative path (e.g.
+// "./operative") against dir. Bare names like "python3" are left for PATH.
+func programPath(p, dir string) string {
+	if dir == "" || filepath.IsAbs(p) || !hasSeparator(p) {
+		return p
+	}
+	return filepath.Join(dir, p)
+}
+
+func hasSeparator(p string) bool {
+	return strings.ContainsRune(p, '/') || strings.ContainsRune(p, filepath.Separator)
+}
+
+func displayDir(dir string) string {
+	if dir == "" {
+		return "the current directory"
+	}
+	return dir
 }
