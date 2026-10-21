@@ -12,6 +12,7 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/peterbourgon/ff/v4 v4.0.0-beta.1
 	github.com/rs/cors v1.11.1
+	golang.org/x/term v0.35.0
 	golang.org/x/text v0.32.0
 	modernc.org/sqlite v1.41.0
 )
