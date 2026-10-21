@@ -21,9 +21,9 @@ const maxStderrBytes = 4 * 1024
 // Player is one student's pair of bot executables. Each command is an argv,
 // e.g. []string{"python3", "bots/alice/spymaster.py"}.
 type Player struct {
-	Name      string
-	Spymaster []string
-	Operative []string
+	Name      string   `json:"name"`
+	Spymaster []string `json:"spymaster"`
+	Operative []string `json:"operative"`
 }
 
 // Options tunes a match. The zero value uses the defaults.
