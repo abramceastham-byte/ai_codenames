@@ -93,12 +93,14 @@ func ListTeams(studentsDir string) ([]string, error) {
 	return names, nil
 }
 
-// findPython returns "python3" if it's on PATH, otherwise "python".
+// findPython returns "python3" if it works, otherwise "python". It runs
+// --version rather than just checking PATH, because on Windows "python3" is
+// often a Microsoft Store placeholder that doesn't run Python.
 func findPython() (string, error) {
 	for _, name := range []string{"python3", "python"} {
-		if _, err := exec.LookPath(name); err == nil {
+		if err := exec.Command(name, "--version").Run(); err == nil {
 			return name, nil
 		}
 	}
-	return "", errors.New("neither python3 nor python was found on PATH")
+	return "", errors.New("neither python3 nor python works; is Python installed and on your PATH?")
 }
