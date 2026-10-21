@@ -1,0 +1,147 @@
+{
+  "protocol_version": 1,
+  "role": "operative",
+  "team": "blue",
+  "starting_team": "blue",
+  "board": [
+    {
+      "word": "knife",
+      "type": "bystander",
+      "revealed": true,
+      "revealed_by": "red"
+    },
+    {
+      "word": "chest",
+      "revealed": false
+    },
+    {
+      "word": "suit",
+      "revealed": false
+    },
+    {
+      "word": "mole",
+      "revealed": false
+    },
+    {
+      "word": "ghost",
+      "revealed": false
+    },
+    {
+      "word": "tail",
+      "type": "blue",
+      "revealed": true,
+      "revealed_by": "blue"
+    },
+    {
+      "word": "trunk",
+      "revealed": false
+    },
+    {
+      "word": "fighter",
+      "revealed": false
+    },
+    {
+      "word": "olympus",
+      "revealed": false
+    },
+    {
+      "word": "sound",
+      "revealed": false
+    },
+    {
+      "word": "time",
+      "revealed": false
+    },
+    {
+      "word": "mercury",
+      "revealed": false
+    },
+    {
+      "word": "bell",
+      "revealed": false
+    },
+    {
+      "word": "park",
+      "revealed": false
+    },
+    {
+      "word": "part",
+      "revealed": false
+    },
+    {
+      "word": "canada",
+      "revealed": false
+    },
+    {
+      "word": "lion",
+      "revealed": false
+    },
+    {
+      "word": "spot",
+      "revealed": false
+    },
+    {
+      "word": "scale",
+      "revealed": false
+    },
+    {
+      "word": "princess",
+      "revealed": false
+    },
+    {
+      "word": "flute",
+      "revealed": false
+    },
+    {
+      "word": "opera",
+      "revealed": false
+    },
+    {
+      "word": "cloak",
+      "revealed": false
+    },
+    {
+      "word": "germany",
+      "revealed": false
+    },
+    {
+      "word": "cell",
+      "revealed": false
+    }
+  ],
+  "history": [
+    {
+      "team": "blue",
+      "clue": {
+        "word": "small",
+        "count": 1
+      },
+      "guesses": [
+        {
+          "word": "tail",
+          "result": "blue"
+        }
+      ],
+      "end": "stopped"
+    },
+    {
+      "team": "red",
+      "clue": {
+        "word": "money",
+        "count": 1
+      },
+      "guesses": [
+        {
+          "word": "knife",
+          "result": "bystander"
+        }
+      ],
+      "end": "wrong_card"
+    }
+  ],
+  "clue": {
+    "word": "cold",
+    "count": 1
+  },
+  "guesses_allowed": 2
+}

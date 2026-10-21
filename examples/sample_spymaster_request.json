@@ -1,0 +1,165 @@
+{
+  "protocol_version": 1,
+  "role": "spymaster",
+  "team": "blue",
+  "starting_team": "blue",
+  "board": [
+    {
+      "word": "knife",
+      "type": "bystander",
+      "revealed": true,
+      "revealed_by": "red"
+    },
+    {
+      "word": "chest",
+      "type": "red",
+      "revealed": false
+    },
+    {
+      "word": "suit",
+      "type": "red",
+      "revealed": false
+    },
+    {
+      "word": "mole",
+      "type": "blue",
+      "revealed": false
+    },
+    {
+      "word": "ghost",
+      "type": "blue",
+      "revealed": false
+    },
+    {
+      "word": "tail",
+      "type": "blue",
+      "revealed": true,
+      "revealed_by": "blue"
+    },
+    {
+      "word": "trunk",
+      "type": "red",
+      "revealed": false
+    },
+    {
+      "word": "fighter",
+      "type": "blue",
+      "revealed": false
+    },
+    {
+      "word": "olympus",
+      "type": "bystander",
+      "revealed": false
+    },
+    {
+      "word": "sound",
+      "type": "blue",
+      "revealed": false
+    },
+    {
+      "word": "time",
+      "type": "blue",
+      "revealed": false
+    },
+    {
+      "word": "mercury",
+      "type": "blue",
+      "revealed": false
+    },
+    {
+      "word": "bell",
+      "type": "bystander",
+      "revealed": false
+    },
+    {
+      "word": "park",
+      "type": "red",
+      "revealed": false
+    },
+    {
+      "word": "part",
+      "type": "red",
+      "revealed": false
+    },
+    {
+      "word": "canada",
+      "type": "assassin",
+      "revealed": false
+    },
+    {
+      "word": "lion",
+      "type": "red",
+      "revealed": false
+    },
+    {
+      "word": "spot",
+      "type": "bystander",
+      "revealed": false
+    },
+    {
+      "word": "scale",
+      "type": "red",
+      "revealed": false
+    },
+    {
+      "word": "princess",
+      "type": "bystander",
+      "revealed": false
+    },
+    {
+      "word": "flute",
+      "type": "bystander",
+      "revealed": false
+    },
+    {
+      "word": "opera",
+      "type": "red",
+      "revealed": false
+    },
+    {
+      "word": "cloak",
+      "type": "blue",
+      "revealed": false
+    },
+    {
+      "word": "germany",
+      "type": "bystander",
+      "revealed": false
+    },
+    {
+      "word": "cell",
+      "type": "blue",
+      "revealed": false
+    }
+  ],
+  "history": [
+    {
+      "team": "blue",
+      "clue": {
+        "word": "small",
+        "count": 1
+      },
+      "guesses": [
+        {
+          "word": "tail",
+          "result": "blue"
+        }
+      ],
+      "end": "stopped"
+    },
+    {
+      "team": "red",
+      "clue": {
+        "word": "money",
+        "count": 1
+      },
+      "guesses": [
+        {
+          "word": "knife",
+          "result": "bystander"
+        }
+      ],
+      "end": "wrong_card"
+    }
+  ]
+}
