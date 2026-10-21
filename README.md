@@ -1,174 +1,105 @@
 # Codenames Bot Tournament
 
-This branch is a stripped-down version of our Codenames project for the class
-bot tournament. Students write a Codenames bot (a spymaster and an operative),
-and matches are run **locally on one machine**. There is no hosting, and no
-accounts beyond a name typed into the browser.
+Students build Codenames bots, each team a **spymaster** and an **operative**, and you run matches
+between teams on your own machine. Bots are standalone programs in any language that read a JSON request
+on stdin and write a JSON response on stdout. Every match produces a move log you can replay, and a row
+in a results file.
 
-What's here:
+## 1. Install
 
-- `cmd/codenames-server`: game server (REST + WebSocket, stores games in SQLite)
-- `frontend/`: browser UI for setting up and watching a game
-- `cmd/ai-server`: hosts the bots and joins them to games
-- `game/`, `codenames/`: the rules engine and core types
-
-## Install
-
-To run bot matches (`cmd/match`, `cmd/replay`), you only need **Go 1.24+** and whatever the bots
-are written in (e.g. Python 3). Students should follow [Test your bot](BOT_GUIDE.md#test-your-bot) in the bot guide.
-
-The browser UI additionally needs **Node 20+** and **pnpm** (`corepack enable` provides it).
+You need **Go 1.24+** ([go.dev/dl](https://go.dev/dl/)), plus whatever the students' bots are written in
+(e.g. **Python 3**). Node isn't needed.
 
 ```bash
 git clone <repo-url> && cd ai_codenames
-cd frontend && pnpm install && cd ..
 go build ./...
 ```
 
-## Where the bot interface is defined
+## 2. Run a match
 
-Students write bots as **standalone executables in any language**. For each
-move, the engine starts the bot, writes one JSON request to its stdin, and reads
-one JSON response from its stdout.
-
-- [`BOT_GUIDE.md`](BOT_GUIDE.md): the guide for students (examples, legal-clue rules, timeouts, forfeits)
-- [`botproto/schema.json`](botproto/schema.json): the formal JSON Schema
-- [`botproto/botproto.go`](botproto/botproto.go): the same protocol as Go structs, plus clue validation
-- [`botproto/match.go`](botproto/match.go): `RunMatch` plays one game between two students' bots
-- [`examples/python/`](examples/python): a minimal spymaster and operative to use as a template
-
-`go test ./botproto/` plays full games between the example bots. It needs `python3`.
-
-The browser flow (see [Watching a game in the browser](#watching-a-game-in-the-browser)) uses the older in-process Go bot interface
-(`Spymaster`/`Operative` in [`codenames/codenames.go`](codenames/codenames.go),
-registered in [`cmd/ai-server/main.go`](cmd/ai-server/main.go)). It does not
-run JSON bots yet.
-
-## Running one match between two bots
-
-`cmd/match` plays one game between two teams of JSON bots. Each team needs a
-spymaster command and an operative command. A command is split on spaces and
-run directly, not through a shell, so **paths in a bot command can't contain
-spaces** (quoting doesn't help). Move or rename the bot's folder if needed.
-Run everything from the repo root.
-
-Try it with the example Python bots playing each other:
+From the repo root:
 
 ```bash
 go run ./cmd/match \
-  --red_name alpha \
-  --red_spymaster "python3 examples/python/spymaster.py" \
-  --red_operative "python3 examples/python/operative.py" \
-  --blue_name beta \
-  --blue_spymaster "python3 examples/python/spymaster.py" \
-  --blue_operative "python3 examples/python/operative.py"
+  --red_name test_student \
+  --red_spymaster "python3 students/test_student/spymaster.py" \
+  --red_operative "python3 students/test_student/operative.py" \
+  --blue_name test_student_2 \
+  --blue_spymaster "python3 students/test_student_2/spymaster.py" \
+  --blue_operative "python3 students/test_student_2/operative.py"
 ```
 
-It prints a summary:
-
 ```
-Match:    alpha (red) vs beta (blue), blue starts, seed 42
-Winner:   beta (blue)
+Match:    test_student (red) vs test_student_2 (blue), blue starts, seed 42
+Winner:   test_student (red)
 Ended by: all agents found
-Turns:    21
+Turns:    18
 Forfeits: none
-Log:      logs/2026-10-20_203542_alpha-vs-beta.jsonl
+Log:      logs/2026-10-20_210927_test_student-vs-test_student_2.jsonl
 ```
 
-For a student's bot, point the commands at their files (any language works):
+Each bot command is run directly, not through a shell, and **paths can't contain spaces**.
+On Windows, use `python` or `py` instead of `python3`, and put the whole command on one line.
 
-```bash
-go run ./cmd/match \
-  --red_name alice \
-  --red_spymaster "python3 bots/alice/spymaster.py" \
-  --red_operative "python3 bots/alice/operative.py" \
-  --blue_name bob \
-  --blue_spymaster "node bots/bob/spymaster.js" \
-  --blue_operative "./bots/bob/operative"
-```
-
-Optional flags:
-
-| flag | default | meaning |
+| Optional flag | Default | Meaning |
 |---|---|---|
-| `--seed N` | random | Board and starting team. The summary prints the seed, so passing it again replays the same board. The bots' own choices may still differ between runs. |
+| `--seed N` | random | Fixes the board and starting team. The seed is printed, so you can rerun the same board. |
 | `--move_timeout 10s` | `10s` | Time limit for each bot move |
-| `--max_turns 50` | `50` | Turn limit. If it's reached, the team with more forfeits loses. If forfeits are equal, the team with fewer cards left wins. The `result` log line's `tiebreak` field (`forfeits` or `cards_left`) says which rule decided it. |
-| `--log_dir logs` | `logs` | Where logs and results are written |
+| `--max_turns 50` | `50` | Turn limit. At the limit, the team with more forfeits loses. If forfeits are equal, fewer cards left wins. |
+| `--log_dir logs` | `logs` | Where logs and results go |
 
-### Logs and results
+A bot that crashes, times out, sends bad JSON, or makes an illegal move **forfeits that turn**. The match
+always finishes, and the summary lists each forfeit with its reason.
 
-All output goes to `logs/`, which git ignores:
+## 3. Results and logs
 
-- **`logs/<date>_<time>_<red>-vs-<blue>.jsonl`**: a move log for each match, one JSON object per line.
-  The first line is `match_start` (teams, bot commands, seed, the starting board with every card's type).
-  After that come `clue`, `guess` (with what each guess revealed), `forfeit` (the reason plus the bot's stderr),
-  and `turn_end` lines, ending with `result`.
-- **`logs/results.csv`**: one row per match (`time, red_team, blue_team, winner, turns, forfeits, reason, log_file`),
-  for tracking wins across the tournament. Open it in any spreadsheet program.
+Everything goes to `logs/`, which git ignores:
 
-### Replaying a match
+- **`logs/results.csv`**: one row per match (`time, red_team, blue_team, winner, turns, forfeits, reason, log_file`).
+  Open it in a spreadsheet to track wins.
+- **`logs/<date>_<time>_<red>-vs-<blue>.jsonl`**: the full move log, one JSON object per line.
+  It starts with the teams, bot commands, seed, and starting board. Then come the clues, guesses (with what
+  each revealed), and forfeits (with the bot's error output). It ends with the result.
 
-`cmd/replay` steps through a move log in the terminal, one event at a time:
+## 4. Replay a game
 
 ```bash
-go run ./cmd/replay logs/2026-10-20_203542_alpha-vs-beta.jsonl
+go run ./cmd/replay logs/2026-10-20_210927_test_student-vs-test_student_2.jsonl
 ```
 
-| key | action |
-|---|---|
-| Enter | next event |
-| `b` | back one event |
-| `s` | switch between operative view (only revealed cards) and spymaster view (all card types) |
-| `q` | quit |
+This shows the board in the terminal and steps through the game one event at a time.
+Controls: **Enter** next, **b** back, **s** switch between the operative's view and the spymaster's view, **q** quit.
 
-On the board, revealed cards are shown as `[R]` red, `[B]` blue, `[N]` bystander, or `[A]` assassin, with color
-when the terminal supports it. In spymaster view, hidden cards show their type in lowercase.
-Below the board you'll see the turn, the clue, the last guess and what it revealed, cards left for each team,
-and any forfeits with their reason. The final step shows the result, including the tiebreak if there was one.
-
-To play the whole game hands-free:
+To play it hands-free (useful for showing a game in class):
 
 ```bash
-go run ./cmd/replay --auto --delay 500ms --spymaster logs/2026-10-20_203542_alpha-vs-beta.jsonl
+go run ./cmd/replay --auto --delay 500ms --spymaster logs/<file>.jsonl
 ```
 
-Use `--no-color` (or set `NO_COLOR=1`) if the colors don't display correctly, e.g. in an older Windows console.
-A corrupted or cut-off log gives an error naming the bad line. A log that just stops (for example, because
-the match was interrupted) replays up to where it ends.
+Add `--no-color` if colors look wrong (e.g. in an older Windows console).
 
-## Watching a game in the browser
+## 5. Student bots
 
-This uses the older Go bots, not JSON bots. Open three terminals in the repo root.
+Each team submits its bot as a folder: **`students/<team>/`**, containing a spymaster and an operative
+(e.g. `spymaster.py` and `operative.py`). Folder names shouldn't contain spaces.
 
-```bash
-# 1. Game server (port 8080)
-AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenames-server/
+- **[BOT_GUIDE.md](BOT_GUIDE.md)**: everything students need, including the protocol, legal clues, timeouts, fair-play rules, and how to test.
+- **[examples/](examples)**: minimal Python bots, the official word list, and sample requests.
+- **[students/test_student](students/test_student)** and **[students/test_student_2](students/test_student_2)**: two complete example teams with different strategies.
 
-# 2. Bot server (port 8081)
-AUTH_SECRET=abc123 WEB_SERVER_ENDPOINT=http://localhost:8080 go run ./cmd/ai-server/
+For developers: the protocol is defined in [botproto/](botproto) (Go structs, a JSON Schema, and the match runner).
+Run `go test ./...` to check everything. The bot tests need `python3`.
 
-# 3. Frontend (port 5173)
-cd frontend && pnpm run dev
-```
+## Legacy browser UI (not used for the tournament)
 
-Then:
-
-1. Open http://localhost:5173, enter any name, and create a game.
-2. For each of the four seats, click **Add AI** and pick a bot from the dropdown
-   (for example, `team-alpha` for both Red seats and `team-beta` for both Blue seats).
-3. Start the game. The bots play automatically. The board and game log update live.
-
-When a game finishes, its log is written as CSV to `logs/` (use `--log_dir` to change this).
-
-### Quick sanity check without bots
-
-`./cmd/codenames-local/run_local.sh` plays a game in the terminal, with all four
-roles typed on stdin.
-
-## Development
+The original web version of the game is still here: a game server (`cmd/codenames-server`), a Svelte frontend
+(`frontend/`), and a bot server (`cmd/ai-server`). It uses an older in-process Go bot interface
+(`codenames/codenames.go`, registered in `cmd/ai-server/main.go`) and **can't run student JSON bots**.
+It needs Node 20+ and pnpm as well as Go.
 
 ```bash
-go build ./... && go vet ./... && go test ./...
-cd frontend && pnpm run check
+cd frontend && pnpm install && cd ..
+AUTH_SECRET=abc123 AI_SERVER_ENDPOINT=http://localhost:8081 go run ./cmd/codenames-server/   # terminal 1
+AUTH_SECRET=abc123 WEB_SERVER_ENDPOINT=http://localhost:8080 go run ./cmd/ai-server/         # terminal 2 (needs a registered Go bot)
+cd frontend && pnpm run dev                                                                   # terminal 3, then open http://localhost:5173
 ```
