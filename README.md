@@ -45,7 +45,9 @@ run JSON bots yet.
 
 `cmd/match` plays one game between two teams of JSON bots. Each team needs a
 spymaster command and an operative command. A command is split on spaces and
-run directly, not through a shell. Run everything from the repo root.
+run directly, not through a shell, so **paths in a bot command can't contain
+spaces** (quoting doesn't help). Move or rename the bot's folder if needed.
+Run everything from the repo root.
 
 Try it with the example Python bots playing each other:
 
