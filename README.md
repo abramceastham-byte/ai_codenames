@@ -104,6 +104,36 @@ All output goes to `logs/`, which git ignores:
 - **`logs/results.csv`**: one row per match (`time, red_team, blue_team, winner, turns, forfeits, reason, log_file`),
   for tracking wins across the tournament. Open it in any spreadsheet program.
 
+### Replaying a match
+
+`cmd/replay` steps through a move log in the terminal, one event at a time:
+
+```bash
+go run ./cmd/replay logs/2026-10-20_203542_alpha-vs-beta.jsonl
+```
+
+| key | action |
+|---|---|
+| Enter | next event |
+| `b` | back one event |
+| `s` | switch between operative view (only revealed cards) and spymaster view (all card types) |
+| `q` | quit |
+
+On the board, revealed cards are shown as `[R]` red, `[B]` blue, `[N]` bystander, or `[A]` assassin, with color
+when the terminal supports it. In spymaster view, hidden cards show their type in lowercase.
+Below the board you'll see the turn, the clue, the last guess and what it revealed, cards left for each team,
+and any forfeits with their reason. The final step shows the result, including the tiebreak if there was one.
+
+To play the whole game hands-free:
+
+```bash
+go run ./cmd/replay --auto --delay 500ms --spymaster logs/2026-10-20_203542_alpha-vs-beta.jsonl
+```
+
+Use `--no-color` (or set `NO_COLOR=1`) if the colors don't display correctly, e.g. in an older Windows console.
+A corrupted or cut-off log gives an error naming the bad line. A log that just stops (for example, because
+the match was interrupted) replays up to where it ends.
+
 ## Watching a game in the browser
 
 This uses the older Go bots, not JSON bots. Open three terminals in the repo root.
