@@ -170,7 +170,7 @@ Every failure is written to the match log along with your stderr.
 | **Operative** times out, crashes, or sends invalid JSON | Turn **forfeited**. No guesses are made. `"end": "operative_forfeit"` |
 | **Operative** guesses a word that isn't on the board, is already revealed, or is repeated | Guesses before it **still count**. The bad guess and everything after it are dropped, and the turn ends with `"end": "operative_forfeit"`. |
 
-If a game reaches **50 turns** without a winner, the team with **fewer of its own cards left** wins. If both have the same number left, it's a draw.
+If a game reaches **50 turns** without a winner, the team with **more forfeits loses**. If both teams have the same number of forfeits, the team with **fewer of its own cards left** wins, and if that's also equal, it's a draw.
 
 ## Tips
 

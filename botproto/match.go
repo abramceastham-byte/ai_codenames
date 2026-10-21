@@ -51,9 +51,12 @@ type Result struct {
 	// Winner is empty for a draw.
 	Winner Team `json:"winner"`
 	// Reason explains how the game ended.
-	Reason  string  `json:"reason"`
-	History []Turn  `json:"history"`
-	Events  []Event `json:"events"`
+	Reason string `json:"reason"`
+	// Tiebreak is the rule that decided a game that hit the turn limit
+	// (TiebreakForfeits or TiebreakCardsLeft), and empty otherwise.
+	Tiebreak string  `json:"tiebreak,omitempty"`
+	History  []Turn  `json:"history"`
+	Events   []Event `json:"events"`
 	// Board is the final board, with every card's type.
 	Board []Card `json:"board"`
 }
@@ -100,17 +103,37 @@ func RunMatch(ctx context.Context, red, blue Player, board *codenames.Board, sta
 		}
 	}
 
-	redLeft, blueLeft := m.left(codenames.RedAgent), m.left(codenames.BlueAgent)
-	switch {
-	case redLeft < blueLeft:
+	// Turn limit: the team with more forfeits loses, then fewer cards left wins.
+	redForfeits, blueForfeits := m.forfeits(TeamRed), m.forfeits(TeamBlue)
+	if redForfeits != blueForfeits {
+		m.res.Tiebreak = TiebreakForfeits
 		m.res.Winner = TeamRed
-	case blueLeft < redLeft:
-		m.res.Winner = TeamBlue
+		if redForfeits > blueForfeits {
+			m.res.Winner = TeamBlue
+		}
+		m.res.Reason = fmt.Sprintf("turn limit reached, decided by forfeits (red %d, blue %d)", redForfeits, blueForfeits)
+	} else {
+		redLeft, blueLeft := m.left(codenames.RedAgent), m.left(codenames.BlueAgent)
+		m.res.Tiebreak = TiebreakCardsLeft
+		switch {
+		case redLeft < blueLeft:
+			m.res.Winner = TeamRed
+		case blueLeft < redLeft:
+			m.res.Winner = TeamBlue
+		}
+		m.res.Reason = fmt.Sprintf("turn limit reached, decided by cards left (red %d left, blue %d left)", redLeft, blueLeft)
 	}
-	m.res.Reason = fmt.Sprintf("turn limit reached (red %d left, blue %d left)", redLeft, blueLeft)
 	m.res.Board = CardsFromBoard(m.state.Board, true)
 	return m.res, nil
 }
+
+const (
+	// TiebreakForfeits: the team with more forfeits lost.
+	TiebreakForfeits = "forfeits"
+	// TiebreakCardsLeft: forfeits were equal, so the team with fewer of its
+	// own cards left won (or it was a draw).
+	TiebreakCardsLeft = "cards_left"
+)
 
 type match struct {
 	players map[Team]Player
@@ -296,6 +319,16 @@ func (m *match) revealed(agent codenames.Agent) bool {
 		}
 	}
 	return false
+}
+
+func (m *match) forfeits(team Team) int {
+	n := 0
+	for _, ev := range m.res.Events {
+		if ev.Team == team {
+			n++
+		}
+	}
+	return n
 }
 
 func (m *match) left(agent codenames.Agent) int {

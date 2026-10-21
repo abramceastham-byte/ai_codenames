@@ -146,6 +146,7 @@ type matchResult struct {
 	Winner     botproto.Team   `json:"winner"`
 	WinnerName string          `json:"winner_name"`
 	Reason     string          `json:"reason"`
+	Tiebreak   string          `json:"tiebreak,omitempty"`
 	Turns      int             `json:"turns"`
 	Forfeits   int             `json:"forfeits"`
 	FinalBoard []botproto.Card `json:"final_board"`
@@ -184,6 +185,7 @@ func writeLog(f *os.File, info matchStart, res *botproto.Result) error {
 		Winner:     res.Winner,
 		WinnerName: teamName(info.Red, info.Blue, res.Winner),
 		Reason:     res.Reason,
+		Tiebreak:   res.Tiebreak,
 		Turns:      len(res.History),
 		Forfeits:   len(res.Events),
 		FinalBoard: res.Board,

@@ -109,3 +109,43 @@ print(json.dumps({"clue": req["board"][0]["word"], "count": 1}))`)}, EndSpymaste
 		})
 	}
 }
+
+func TestTurnLimitTiebreak(t *testing.T) {
+	py := requirePython(t)
+	crashing := Player{
+		Name:      "crashing",
+		Spymaster: []string{py, "-c", "import sys; sys.exit(1)"},
+		Operative: []string{py, "-c", "import sys; sys.exit(1)"},
+	}
+	// The passing team gives legal clues but never guesses, so no cards are
+	// revealed and only forfeits can separate the teams.
+	passing := Player{
+		Name:      "passing",
+		Spymaster: examplePlayer(py, "").Spymaster,
+		Operative: []string{py, "-c", `print('{"guesses": []}')`},
+	}
+
+	tests := []struct {
+		name         string
+		red, blue    Player
+		wantWinner   Team
+		wantTiebreak string
+	}{
+		{"crashing red loses", crashing, passing, TeamBlue, TiebreakForfeits},
+		{"crashing blue loses", passing, crashing, TeamRed, TiebreakForfeits},
+		// Equal forfeits (none) and red starts with 9 cards to blue's 8.
+		{"cards left", passing, passing, TeamBlue, TiebreakCardsLeft},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			board := boardgen.New(codenames.RedTeam, rand.New(rand.NewSource(1)))
+			res, err := RunMatch(context.Background(), tt.red, tt.blue, board, codenames.RedTeam, Options{MaxTurns: 4})
+			if err != nil {
+				t.Fatalf("RunMatch: %v", err)
+			}
+			if res.Winner != tt.wantWinner || res.Tiebreak != tt.wantTiebreak {
+				t.Errorf("got winner %q by %q (%s), want %q by %q", res.Winner, res.Tiebreak, res.Reason, tt.wantWinner, tt.wantTiebreak)
+			}
+		})
+	}
+}

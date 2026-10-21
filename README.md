@@ -88,7 +88,7 @@ Optional flags:
 |---|---|---|
 | `--seed N` | random | Board and starting team. The summary prints the seed, so passing it again replays the same board. The bots' own choices may still differ between runs. |
 | `--move_timeout 10s` | `10s` | Time limit for each bot move |
-| `--max_turns 50` | `50` | Turn limit. If it's reached, the team with fewer cards left wins. |
+| `--max_turns 50` | `50` | Turn limit. If it's reached, the team with more forfeits loses. If forfeits are equal, the team with fewer cards left wins. The `result` log line's `tiebreak` field (`forfeits` or `cards_left`) says which rule decided it. |
 | `--log_dir logs` | `logs` | Where logs and results are written |
 
 ### Logs and results
