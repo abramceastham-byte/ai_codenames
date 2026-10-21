@@ -95,7 +95,7 @@ func RunMatch(ctx context.Context, red, blue Player, board *codenames.Board, sta
 			} else {
 				m.res.Reason = "all agents found"
 			}
-			m.res.Board = toCards(m.state.Board, true)
+			m.res.Board = CardsFromBoard(m.state.Board, true)
 			return m.res, nil
 		}
 	}
@@ -108,7 +108,7 @@ func RunMatch(ctx context.Context, red, blue Player, board *codenames.Board, sta
 		m.res.Winner = TeamBlue
 	}
 	m.res.Reason = fmt.Sprintf("turn limit reached (red %d left, blue %d left)", redLeft, blueLeft)
-	m.res.Board = toCards(m.state.Board, true)
+	m.res.Board = CardsFromBoard(m.state.Board, true)
 	return m.res, nil
 }
 
@@ -131,7 +131,7 @@ func (m *match) playTurn(ctx context.Context) (bool, error) {
 	var sr SpymasterResponse
 	err := m.ask(ctx, player.Spymaster, m.request(RoleSpymaster, nil), &sr)
 	if err == nil {
-		err = ValidateClue(sr, toCards(m.state.Board, true))
+		err = ValidateClue(sr, CardsFromBoard(m.state.Board, true))
 	}
 	if err != nil {
 		m.logFailure(team, RoleSpymaster, player.Name, err)
@@ -219,7 +219,7 @@ func (m *match) request(role Role, clue *Clue) *Request {
 		ProtocolVersion: ProtocolVersion,
 		Role:            role,
 		Team:            fromTeam(m.state.ActiveTeam),
-		Board:           toCards(m.state.Board, role == RoleSpymaster),
+		Board:           CardsFromBoard(m.state.Board, role == RoleSpymaster),
 		History:         m.res.History,
 	}
 	if clue != nil {
@@ -326,7 +326,9 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
-func toCards(b *codenames.Board, showTypes bool) []Card {
+// CardsFromBoard converts an engine board to protocol cards. With showTypes
+// false, unrevealed cards have no Type, as operatives see them.
+func CardsFromBoard(b *codenames.Board, showTypes bool) []Card {
 	out := make([]Card, len(b.Cards))
 	for i, c := range b.Cards {
 		out[i] = Card{Word: c.Codename, Revealed: c.Revealed}
