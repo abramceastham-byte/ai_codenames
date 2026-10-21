@@ -91,11 +91,11 @@ func run() error {
 		return fmt.Errorf("creating move log: %w", err)
 	}
 	logPath := logFile.Name()
-	info := matchStart{
-		Type:          "match_start",
+	info := botproto.LogMatchStart{
+		Type:          botproto.LogMatchStartType,
 		Time:          start.Format(time.RFC3339),
 		Seed:          *seed,
-		StartingTeam:  strings.ToLower(string(starter)),
+		StartingTeam:  botproto.Team(strings.ToLower(string(starter))),
 		MoveTimeoutMS: moveTimeout.Milliseconds(),
 		MaxTurns:      *maxTurns,
 		Red:           red,
@@ -113,48 +113,9 @@ func run() error {
 	return nil
 }
 
-type matchStart struct {
-	Type          string          `json:"type"`
-	Time          string          `json:"time"`
-	Seed          int64           `json:"seed"`
-	StartingTeam  string          `json:"starting_team"`
-	MoveTimeoutMS int64           `json:"move_timeout_ms"`
-	MaxTurns      int             `json:"max_turns"`
-	Red           botproto.Player `json:"red"`
-	Blue          botproto.Player `json:"blue"`
-	Board         []botproto.Card `json:"board"`
-}
-
-// turnEvent is one clue, guess, forfeit, or turn_end line in the move log.
-type turnEvent struct {
-	Type     string            `json:"type"`
-	Turn     int               `json:"turn"`
-	Team     botproto.Team     `json:"team"`
-	Role     botproto.Role     `json:"role,omitempty"`
-	Bot      string            `json:"bot,omitempty"`
-	Word     string            `json:"word,omitempty"`
-	Count    int               `json:"count,omitempty"`
-	Revealed botproto.CardType `json:"revealed,omitempty"`
-	End      botproto.TurnEnd  `json:"end,omitempty"`
-	Reason   string            `json:"reason,omitempty"`
-	Stderr   string            `json:"stderr,omitempty"`
-}
-
-// matchResult is the last line of the move log. Winner is empty for a draw.
-type matchResult struct {
-	Type       string          `json:"type"`
-	Winner     botproto.Team   `json:"winner"`
-	WinnerName string          `json:"winner_name"`
-	Reason     string          `json:"reason"`
-	Tiebreak   string          `json:"tiebreak,omitempty"`
-	Turns      int             `json:"turns"`
-	Forfeits   int             `json:"forfeits"`
-	FinalBoard []botproto.Card `json:"final_board"`
-}
-
 // writeLog writes the match as JSONL: match_start, then per turn a clue,
 // its guesses, any forfeit, and a turn_end, then the final result.
-func writeLog(f *os.File, info matchStart, res *botproto.Result) error {
+func writeLog(f *os.File, info botproto.LogMatchStart, res *botproto.Result) error {
 	var err error
 	enc := json.NewEncoder(f)
 	enc.SetEscapeHTML(false)
@@ -168,20 +129,20 @@ func writeLog(f *os.File, info matchStart, res *botproto.Result) error {
 	for i, t := range res.History {
 		n := i + 1
 		if t.Clue != nil {
-			write(turnEvent{Type: "clue", Turn: n, Team: t.Team, Word: t.Clue.Word, Count: t.Clue.Count})
+			write(botproto.LogEvent{Type: botproto.LogClue, Turn: n, Team: t.Team, Word: t.Clue.Word, Count: t.Clue.Count})
 		}
 		for _, g := range t.Guesses {
-			write(turnEvent{Type: "guess", Turn: n, Team: t.Team, Word: g.Word, Revealed: g.Result})
+			write(botproto.LogEvent{Type: botproto.LogGuess, Turn: n, Team: t.Team, Word: g.Word, Revealed: g.Result})
 		}
 		for _, ev := range res.Events {
 			if ev.Turn == n {
-				write(turnEvent{Type: "forfeit", Turn: n, Team: ev.Team, Role: ev.Role, Bot: ev.Bot, Reason: ev.Error, Stderr: ev.Stderr})
+				write(botproto.LogEvent{Type: botproto.LogForfeit, Turn: n, Team: ev.Team, Role: ev.Role, Bot: ev.Bot, Reason: ev.Error, Stderr: ev.Stderr})
 			}
 		}
-		write(turnEvent{Type: "turn_end", Turn: n, Team: t.Team, End: t.End})
+		write(botproto.LogEvent{Type: botproto.LogTurnEnd, Turn: n, Team: t.Team, End: t.End})
 	}
-	write(matchResult{
-		Type:       "result",
+	write(botproto.LogResult{
+		Type:       botproto.LogResultType,
 		Winner:     res.Winner,
 		WinnerName: teamName(info.Red, info.Blue, res.Winner),
 		Reason:     res.Reason,
@@ -218,7 +179,7 @@ func appendResult(path string, start time.Time, red, blue botproto.Player, res *
 	return errors.Join(w.Error(), f.Close())
 }
 
-func printSummary(info matchStart, res *botproto.Result, logPath string) {
+func printSummary(info botproto.LogMatchStart, res *botproto.Result, logPath string) {
 	fmt.Printf("Match:    %s (red) vs %s (blue), %s starts, seed %d\n", info.Red.Name, info.Blue.Name, info.StartingTeam, info.Seed)
 	if res.Winner == "" {
 		fmt.Println("Winner:   draw")
