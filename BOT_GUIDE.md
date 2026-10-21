@@ -192,22 +192,27 @@ Every failure is written to the match log along with your stderr.
 
 If a game reaches **50 turns** without a winner, the team with **more forfeits loses**. If both teams have the same number of forfeits, the team with **fewer of its own cards left** wins, and if that's also equal, it's a draw.
 
-**There's no way to skip a turn.** Your operative must guess at least once every turn, and giving a
-filler clue on purpose breaks the [fair play rules](#fair-play). Every forfeit also counts against you if
-the game reaches the turn limit, so a bot that stalls is very likely to lose.
+**There's no way to skip a turn.** Your operative must guess at least once every turn. Every forfeit
+counts against you if the game reaches the turn limit, so a bot that stalls is very likely to lose.
+Weak or vague clues are allowed. They just make your team slower.
 
 ## Fair play
 
 Breaking either rule means **disqualification**.
 
-1. **Clues must be real words used for their meaning.** Use ordinary English words you'd find in a
-   dictionary, chosen because they relate to your team's words. Made-up words, codes, and words chosen
-   for their spelling, length, or position on the board are not allowed (e.g. "a clue starting with `c`
-   means guess the third card").
+1. **Clues must be real words, and must not hide game information.** Use ordinary English words you'd
+   find in a dictionary. A weak or unhelpful clue is allowed. What isn't allowed is using a clue to pass
+   information other than its meaning: made-up words, codes, or words chosen for their spelling, length,
+   or position on the board (e.g. "a clue starting with `c` means guess the third card").
 2. **Your spymaster and operative must not communicate during a game.** They may share code and data you
    prepare in advance, such as a word list or a model. During a game, though, the only thing the operative
    may learn from the spymaster is the clue itself. That means no writing files for the other bot to read,
    no sockets or shared servers that pass game information between them, and no hidden messages in clues.
+
+**Ollama, outside APIs, and local model servers are allowed.** Your spymaster and operative may both
+call the same model or service. The rule is only that no game information may pass between them through it:
+don't store the spymaster's board or reasoning anywhere the operative can read it, and don't keep
+per-game state on a server that both bots share.
 
 If you aren't sure whether something is allowed, ask the professor before the tournament.
 
