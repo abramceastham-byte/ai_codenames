@@ -247,6 +247,7 @@ func (m *match) request(role Role, clue *Clue) *Request {
 		ProtocolVersion: ProtocolVersion,
 		Role:            role,
 		Team:            fromTeam(m.state.ActiveTeam),
+		StartingTeam:    fromTeam(m.state.StartingTeam),
 		Board:           CardsFromBoard(m.state.Board, role == RoleSpymaster),
 		History:         m.res.History,
 	}

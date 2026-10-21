@@ -68,11 +68,15 @@
     },
     "Request": {
       "type": "object",
-      "required": ["protocol_version", "role", "team", "board", "history"],
+      "required": ["protocol_version", "role", "team", "starting_team", "board", "history"],
       "properties": {
         "protocol_version": { "const": 1 },
         "role": { "enum": ["spymaster", "operative"] },
         "team": { "$ref": "#/$defs/Team" },
+        "starting_team": {
+          "$ref": "#/$defs/Team",
+          "description": "The team that went first. It has 9 cards; the other team has 8."
+        },
         "board": {
           "type": "array",
           "minItems": 25,

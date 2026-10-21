@@ -111,11 +111,13 @@ type Turn struct {
 // Request is what the engine writes to a bot's stdin. Clue and
 // GuessesAllowed are only set for operatives.
 type Request struct {
-	ProtocolVersion int    `json:"protocol_version"`
-	Role            Role   `json:"role"`
-	Team            Team   `json:"team"`
-	Board           []Card `json:"board"`
-	History         []Turn `json:"history"`
+	ProtocolVersion int  `json:"protocol_version"`
+	Role            Role `json:"role"`
+	Team            Team `json:"team"`
+	// StartingTeam went first and has 9 cards; the other team has 8.
+	StartingTeam Team   `json:"starting_team"`
+	Board        []Card `json:"board"`
+	History      []Turn `json:"history"`
 
 	Clue           *Clue `json:"clue,omitempty"`
 	GuessesAllowed int   `json:"guesses_allowed,omitempty"`

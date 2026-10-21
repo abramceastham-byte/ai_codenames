@@ -44,6 +44,7 @@ The spymaster sees the type of **every** card.
   "protocol_version": 1,
   "role": "spymaster",
   "team": "red",
+  "starting_team": "blue",
   "board": [
     { "word": "africa", "type": "red", "revealed": false },
     { "word": "agent", "type": "blue", "revealed": true, "revealed_by": "blue" },
@@ -100,6 +101,7 @@ It also gets the clue for this turn and how many guesses it may make (**count + 
   "protocol_version": 1,
   "role": "operative",
   "team": "red",
+  "starting_team": "blue",
   "board": [
     { "word": "africa", "revealed": false },
     { "word": "agent", "type": "blue", "revealed": true, "revealed_by": "blue" },
