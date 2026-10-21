@@ -87,7 +87,7 @@ const (
 	EndWrongCard TurnEnd = "wrong_card"
 	// EndOutOfGuesses: the operative used all count+1 guesses.
 	EndOutOfGuesses TurnEnd = "out_of_guesses"
-	// EndStopped: the operative's guess list ran out (including passing).
+	// EndStopped: the operative's guess list ran out with guesses to spare.
 	EndStopped TurnEnd = "stopped"
 	// EndGameOver: the turn ended the game.
 	EndGameOver TurnEnd = "game_over"
@@ -95,7 +95,8 @@ const (
 	// or gave an illegal clue. Clue is null and no guesses were made.
 	EndSpymasterForfeit TurnEnd = "spymaster_forfeit"
 	// EndOperativeForfeit: the operative timed out, crashed, sent bad JSON,
-	// or guessed an illegal word. Guesses before the bad one still count.
+	// sent no guesses, or guessed an illegal word. Guesses before the bad one
+	// still count.
 	EndOperativeForfeit TurnEnd = "operative_forfeit"
 )
 
@@ -127,7 +128,7 @@ type SpymasterResponse struct {
 }
 
 // OperativeResponse is what an operative writes to stdout. Guesses are tried
-// in order; an empty list passes.
+// in order, and there must be at least one.
 type OperativeResponse struct {
 	Guesses []string `json:"guesses"`
 }

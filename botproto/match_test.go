@@ -80,11 +80,11 @@ print(json.dumps({"clue": req["board"][0]["word"], "count": 1}))`)}, EndSpymaste
 			Spymaster: good.Spymaster,
 			Operative: script(`print('{"guesses": ["notaboardword"]}')`),
 		}, EndOperativeForfeit},
-		{"pass", Player{
+		{"no guesses", Player{
 			Name:      "x",
 			Spymaster: good.Spymaster,
 			Operative: script(`print('{"guesses": []}')`),
-		}, EndStopped},
+		}, EndOperativeForfeit},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -117,12 +117,22 @@ func TestTurnLimitTiebreak(t *testing.T) {
 		Spymaster: []string{py, "-c", "import sys; sys.exit(1)"},
 		Operative: []string{py, "-c", "import sys; sys.exit(1)"},
 	}
-	// The passing team gives legal clues but never guesses, so no cards are
-	// revealed and only forfeits can separate the teams.
-	passing := Player{
-		Name:      "passing",
+	// The stalling team gives legal clues but never guesses, so it forfeits
+	// every turn without revealing cards.
+	stalling := Player{
+		Name:      "stalling",
 		Spymaster: examplePlayer(py, "").Spymaster,
 		Operative: []string{py, "-c", `print('{"guesses": []}')`},
+	}
+	// The steady team always guesses the first unrevealed word, so it never
+	// forfeits.
+	steady := Player{
+		Name:      "steady",
+		Spymaster: examplePlayer(py, "").Spymaster,
+		Operative: []string{py, "-c", `
+import json, sys
+req = json.load(sys.stdin)
+print(json.dumps({"guesses": [next(c["word"] for c in req["board"] if not c["revealed"])]}))`},
 	}
 
 	tests := []struct {
@@ -131,15 +141,15 @@ func TestTurnLimitTiebreak(t *testing.T) {
 		wantWinner   Team
 		wantTiebreak string
 	}{
-		{"crashing red loses", crashing, passing, TeamBlue, TiebreakForfeits},
-		{"crashing blue loses", passing, crashing, TeamRed, TiebreakForfeits},
-		// Equal forfeits (none) and red starts with 9 cards to blue's 8.
-		{"cards left", passing, passing, TeamBlue, TiebreakCardsLeft},
+		{"crashing red loses", crashing, steady, TeamBlue, TiebreakForfeits},
+		{"crashing blue loses", steady, crashing, TeamRed, TiebreakForfeits},
+		// Equal forfeits, no cards revealed, and red starts with 9 cards to
+		// blue's 8.
+		{"cards left", stalling, stalling, TeamBlue, TiebreakCardsLeft},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			board := boardgen.New(codenames.RedTeam, rand.New(rand.NewSource(1)))
-			res, err := RunMatch(context.Background(), tt.red, tt.blue, board, codenames.RedTeam, Options{MaxTurns: 4})
+			res, err := RunMatch(context.Background(), tt.red, tt.blue, safeBoard(), codenames.RedTeam, Options{MaxTurns: 4})
 			if err != nil {
 				t.Fatalf("RunMatch: %v", err)
 			}
@@ -147,5 +157,16 @@ func TestTurnLimitTiebreak(t *testing.T) {
 				t.Errorf("got winner %q by %q (%s), want %q by %q", res.Winner, res.Tiebreak, res.Reason, tt.wantWinner, tt.wantTiebreak)
 			}
 		})
+	}
+}
+
+// safeBoard returns a board whose first two cards aren't the assassin, so the
+// steady team's first guesses can't end the game early.
+func safeBoard() *codenames.Board {
+	for seed := int64(1); ; seed++ {
+		b := boardgen.New(codenames.RedTeam, rand.New(rand.NewSource(seed)))
+		if b.Cards[0].Agent != codenames.Assassin && b.Cards[1].Agent != codenames.Assassin {
+			return b
+		}
 	}
 }

@@ -178,6 +178,11 @@ func (m *match) playTurn(ctx context.Context) (bool, error) {
 		turn.End = EndOperativeForfeit
 		return false, m.forfeit()
 	}
+	if len(or.Guesses) == 0 {
+		m.logFailure(team, RoleOperative, player.Name, errors.New("no guesses: at least one guess is required each turn"))
+		turn.End = EndOperativeForfeit
+		return false, m.forfeit()
+	}
 	for _, word := range or.Guesses {
 		card, err := m.findGuess(word)
 		if err != nil {
@@ -208,7 +213,7 @@ func (m *match) playTurn(ctx context.Context) (bool, error) {
 		}
 	}
 
-	// The guess list ran out with guesses to spare: pass.
+	// The guess list ran out with guesses to spare: end the turn.
 	turn.End = EndStopped
 	if _, _, err := m.g.Move(&game.Move{Action: game.ActionGuess, Team: m.state.ActiveTeam}); err != nil {
 		return false, fmt.Errorf("passing: %w", err)

@@ -115,7 +115,8 @@
         "guesses": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "In order. Empty list passes."
+          "minItems": 1,
+          "description": "In order. At least one guess is required; an empty list forfeits the turn."
         }
       }
     }

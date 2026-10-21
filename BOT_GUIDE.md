@@ -130,11 +130,8 @@ List your guesses **in the order you want them tried**:
 { "guesses": ["africa", "asia"] }
 ```
 
-To pass without guessing anything, send an empty list:
-
-```json
-{ "guesses": [] }
-```
+You **must make at least one guess** every turn. An empty list (`{"guesses": []}`)
+counts as a **forfeit**. To stop early, just list fewer guesses than `guesses_allowed`.
 
 ### How guesses are applied
 
@@ -167,7 +164,7 @@ Every failure is written to the match log along with your stderr.
 | What happened | Result |
 |---|---|
 | **Spymaster** times out, crashes (non-zero exit), sends invalid JSON, or gives an illegal clue | Turn **forfeited**. No clue, no guesses, play passes to the other team. History shows `"clue": null, "end": "spymaster_forfeit"`. |
-| **Operative** times out, crashes, or sends invalid JSON | Turn **forfeited**. No guesses are made. `"end": "operative_forfeit"` |
+| **Operative** times out, crashes, sends invalid JSON, or sends an empty guess list | Turn **forfeited**. No guesses are made. `"end": "operative_forfeit"` |
 | **Operative** guesses a word that isn't on the board, is already revealed, or is repeated | Guesses before it **still count**. The bad guess and everything after it are dropped, and the turn ends with `"end": "operative_forfeit"`. |
 
 If a game reaches **50 turns** without a winner, the team with **more forfeits loses**. If both teams have the same number of forfeits, the team with **fewer of its own cards left** wins, and if that's also equal, it's a draw.
