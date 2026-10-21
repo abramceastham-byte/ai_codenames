@@ -2,7 +2,11 @@
 // BOT_GUIDE.md), writes a JSONL move log, and appends the outcome to a
 // results file.
 //
-// Example:
+// Teams are folders in students/ (see arena.LoadTeam):
+//
+//	go run ./cmd/match test_student test_student_2
+//
+// Or give each bot's command directly:
 //
 //	go run ./cmd/match \
 //	  --red_name alpha \
@@ -15,37 +19,35 @@ package main
 
 import (
 	"context"
-	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"log"
-	"math/rand"
 	"os"
-	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
-	"time"
 
-	"github.com/bcspragu/Codenames/boardgen"
+	"github.com/bcspragu/Codenames/arena"
 	"github.com/bcspragu/Codenames/botproto"
-	"github.com/bcspragu/Codenames/codenames"
 )
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(os.Stderr, "match:", err)
+		os.Exit(1)
 	}
 }
 
 func run() error {
+	flag.Usage = func() {
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: match [flags] <red team> <blue team>")
+		fmt.Fprintln(flag.CommandLine.Output(), "   or: match [flags] --red_spymaster ... --red_operative ... --blue_spymaster ... --blue_operative ...")
+		flag.PrintDefaults()
+	}
 	var (
-		redName       = flag.String("red_name", "red", "Name of the red team")
+		studentsDir   = flag.String("students_dir", "students", "Folder containing one folder per team")
+		redName       = flag.String("red_name", "red", "Name of the red team (with --red_spymaster/--red_operative)")
 		redSpymaster  = flag.String("red_spymaster", "", "Command for the red spymaster bot (split on spaces, no shell)")
 		redOperative  = flag.String("red_operative", "", "Command for the red operative bot")
-		blueName      = flag.String("blue_name", "blue", "Name of the blue team")
+		blueName      = flag.String("blue_name", "blue", "Name of the blue team (with --blue_spymaster/--blue_operative)")
 		blueSpymaster = flag.String("blue_spymaster", "", "Command for the blue spymaster bot")
 		blueOperative = flag.String("blue_operative", "", "Command for the blue operative bot")
 		moveTimeout   = flag.Duration("move_timeout", botproto.DefaultMoveTimeout, "Time limit for each bot move")
@@ -55,178 +57,36 @@ func run() error {
 	)
 	flag.Parse()
 
-	red := botproto.Player{Name: *redName, Spymaster: strings.Fields(*redSpymaster), Operative: strings.Fields(*redOperative)}
-	blue := botproto.Player{Name: *blueName, Spymaster: strings.Fields(*blueSpymaster), Operative: strings.Fields(*blueOperative)}
-	for _, p := range []botproto.Player{red, blue} {
-		if len(p.Spymaster) == 0 || len(p.Operative) == 0 {
-			return fmt.Errorf("team %q needs both a spymaster and an operative command", p.Name)
+	var red, blue botproto.Player
+	commandFlags := *redSpymaster + *redOperative + *blueSpymaster + *blueOperative
+	switch {
+	case flag.NArg() == 2 && commandFlags == "":
+		var err error
+		if red, err = arena.LoadTeam(*studentsDir, flag.Arg(0)); err != nil {
+			return err
 		}
+		if blue, err = arena.LoadTeam(*studentsDir, flag.Arg(1)); err != nil {
+			return err
+		}
+	case flag.NArg() == 0 && commandFlags != "":
+		red = botproto.Player{Name: *redName, Spymaster: strings.Fields(*redSpymaster), Operative: strings.Fields(*redOperative)}
+		blue = botproto.Player{Name: *blueName, Spymaster: strings.Fields(*blueSpymaster), Operative: strings.Fields(*blueOperative)}
+	case flag.NArg() > 0 && commandFlags != "":
+		return errors.New("give either two team names or the --red_*/--blue_* command flags, not both")
+	default:
+		flag.Usage()
+		os.Exit(2)
 	}
 
-	if *seed == 0 {
-		*seed = time.Now().UnixNano()
-	}
-	r := rand.New(rand.NewSource(*seed))
-	starter := codenames.RedTeam
-	if r.Intn(2) == 1 {
-		starter = codenames.BlueTeam
-	}
-	board := boardgen.New(starter, r)
-
-	start := time.Now()
-	res, err := botproto.RunMatch(context.Background(), red, blue, board, starter, botproto.Options{
+	m, err := arena.PlayMatch(context.Background(), red, blue, arena.Config{
+		Seed:        *seed,
 		MoveTimeout: *moveTimeout,
 		MaxTurns:    *maxTurns,
+		LogDir:      *logDir,
 	})
-	if err != nil {
-		return fmt.Errorf("running match: %w", err)
-	}
-
-	if err := os.MkdirAll(*logDir, 0o755); err != nil {
-		return fmt.Errorf("creating log dir: %w", err)
-	}
-	logName := fmt.Sprintf("%s_%s-vs-%s", start.Format("2006-01-02_150405"), fileSafe(red.Name), fileSafe(blue.Name))
-	logFile, err := createUnique(filepath.Join(*logDir, logName), ".jsonl")
-	if err != nil {
-		return fmt.Errorf("creating move log: %w", err)
-	}
-	logPath := logFile.Name()
-	info := botproto.LogMatchStart{
-		Type:          botproto.LogMatchStartType,
-		Time:          start.Format(time.RFC3339),
-		Seed:          *seed,
-		StartingTeam:  botproto.Team(strings.ToLower(string(starter))),
-		MoveTimeoutMS: moveTimeout.Milliseconds(),
-		MaxTurns:      *maxTurns,
-		Red:           red,
-		Blue:          blue,
-		Board:         botproto.CardsFromBoard(board, true),
-	}
-	if err := writeLog(logFile, info, res); err != nil {
-		return fmt.Errorf("writing move log: %w", err)
-	}
-	if err := appendResult(filepath.Join(*logDir, "results.csv"), start, red, blue, res, logPath); err != nil {
-		return fmt.Errorf("writing results: %w", err)
-	}
-
-	printSummary(info, res, logPath)
-	return nil
-}
-
-// writeLog writes the match as JSONL: match_start, then per turn a clue,
-// its guesses, any forfeit, and a turn_end, then the final result.
-func writeLog(f *os.File, info botproto.LogMatchStart, res *botproto.Result) error {
-	var err error
-	enc := json.NewEncoder(f)
-	enc.SetEscapeHTML(false)
-	write := func(v any) {
-		if err == nil {
-			err = enc.Encode(v)
-		}
-	}
-
-	write(info)
-	for i, t := range res.History {
-		n := i + 1
-		if t.Clue != nil {
-			write(botproto.LogEvent{Type: botproto.LogClue, Turn: n, Team: t.Team, Word: t.Clue.Word, Count: t.Clue.Count})
-		}
-		for _, g := range t.Guesses {
-			write(botproto.LogEvent{Type: botproto.LogGuess, Turn: n, Team: t.Team, Word: g.Word, Revealed: g.Result})
-		}
-		for _, ev := range res.Events {
-			if ev.Turn == n {
-				write(botproto.LogEvent{Type: botproto.LogForfeit, Turn: n, Team: ev.Team, Role: ev.Role, Bot: ev.Bot, Reason: ev.Error, Stderr: ev.Stderr})
-			}
-		}
-		write(botproto.LogEvent{Type: botproto.LogTurnEnd, Turn: n, Team: t.Team, End: t.End})
-	}
-	write(botproto.LogResult{
-		Type:       botproto.LogResultType,
-		Winner:     res.Winner,
-		WinnerName: teamName(info.Red, info.Blue, res.Winner),
-		Reason:     res.Reason,
-		Tiebreak:   res.Tiebreak,
-		Turns:      len(res.History),
-		Forfeits:   len(res.Events),
-		FinalBoard: res.Board,
-	})
-
-	return errors.Join(err, f.Close())
-}
-
-// appendResult adds one row to the results CSV, writing a header if the file
-// is new.
-func appendResult(path string, start time.Time, red, blue botproto.Player, res *botproto.Result, logPath string) error {
-	_, statErr := os.Stat(path)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
-	w := csv.NewWriter(f)
-	if errors.Is(statErr, os.ErrNotExist) {
-		w.Write([]string{"time", "red_team", "blue_team", "winner", "turns", "forfeits", "reason", "log_file"})
-	}
-	winner := teamName(red, blue, res.Winner)
-	if winner == "" {
-		winner = "draw"
-	}
-	w.Write([]string{
-		start.Format(time.RFC3339), red.Name, blue.Name, winner,
-		strconv.Itoa(len(res.History)), strconv.Itoa(len(res.Events)), res.Reason, filepath.Base(logPath),
-	})
-	w.Flush()
-	return errors.Join(w.Error(), f.Close())
-}
-
-func printSummary(info botproto.LogMatchStart, res *botproto.Result, logPath string) {
-	fmt.Printf("Match:    %s (red) vs %s (blue), %s starts, seed %d\n", info.Red.Name, info.Blue.Name, info.StartingTeam, info.Seed)
-	if res.Winner == "" {
-		fmt.Println("Winner:   draw")
-	} else {
-		fmt.Printf("Winner:   %s (%s)\n", teamName(info.Red, info.Blue, res.Winner), res.Winner)
-	}
-	fmt.Printf("Ended by: %s\n", res.Reason)
-	fmt.Printf("Turns:    %d\n", len(res.History))
-	if len(res.Events) == 0 {
-		fmt.Println("Forfeits: none")
-	} else {
-		fmt.Printf("Forfeits: %d\n", len(res.Events))
-		for _, ev := range res.Events {
-			fmt.Printf("  turn %d, %s %s (%s): %s\n", ev.Turn, ev.Team, ev.Role, ev.Bot, ev.Error)
-		}
-	}
-	fmt.Printf("Log:      %s\n", logPath)
-}
-
-// createUnique creates base+ext, or base-2+ext, base-3+ext, ... if it exists,
-// so matches started in the same second don't overwrite each other's logs.
-func createUnique(base, ext string) (*os.File, error) {
-	path := base + ext
-	for i := 2; ; i++ {
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-		if !errors.Is(err, os.ErrExist) {
-			return f, err
-		}
-		path = fmt.Sprintf("%s-%d%s", base, i, ext)
-	}
-}
-
-func teamName(red, blue botproto.Player, t botproto.Team) string {
-	switch t {
-	case botproto.TeamRed:
-		return red.Name
-	case botproto.TeamBlue:
-		return blue.Name
-	}
-	return ""
-}
-
-var unsafeChars = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
-
-func fileSafe(name string) string {
-	if s := unsafeChars.ReplaceAllString(name, "_"); s != "" {
-		return s
-	}
-	return "team"
+	arena.PrintSummary(os.Stdout, m)
+	return nil
 }
