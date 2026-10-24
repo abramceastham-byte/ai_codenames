@@ -1,10 +1,25 @@
-# Runs the bot tournament (cmd/tournament, cmd/match, cmd/replay) with Go and
-# Python 3 inside the container, so nothing but Docker is needed on the host.
+# Runs the bot tournament (cmd/tournament, cmd/match, cmd/replay) with the
+# runtimes student bots are likely to need, so nothing but Docker is needed on
+# the host: Python 3 (with common libraries), Node.js, and a C/C++ toolchain.
+# Anything else a team needs goes in its own requirements.txt (see the
+# entrypoint) or a team.json command.
 FROM golang:1.24-bookworm
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 curl ca-certificates \
+    && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-dev nodejs npm build-essential curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Debian marks its Python as externally managed; this is a throwaway container.
+ENV PIP_BREAK_SYSTEM_PACKAGES=1 PIP_NO_CACHE_DIR=1
+
+# Libraries most bots reach for. Big ones (torch, gensim, ...) are left to a
+# team's requirements.txt.
+RUN pip install numpy scipy pandas scikit-learn requests nltk
+
+# Team packages land here (a volume in docker-compose.yml), ahead of the above.
+ENV PYTHONPATH=/deps
+RUN mkdir /deps
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -12,8 +27,9 @@ RUN go mod download
 COPY . .
 RUN go build -o /usr/local/bin/tournament ./cmd/tournament \
     && go build -o /usr/local/bin/match ./cmd/match \
-    && go build -o /usr/local/bin/replay ./cmd/replay
+    && go build -o /usr/local/bin/replay ./cmd/replay \
+    && install -m 755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # students/ and logs/ are mounted by docker-compose.yml, so edits and results
 # stay on the host.
-ENTRYPOINT ["tournament"]
+ENTRYPOINT ["entrypoint.sh"]

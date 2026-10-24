@@ -50,11 +50,18 @@ If you'd rather not install Go or Python, Docker (with Compose) does all of it. 
 ```bash
 docker compose run --rm tournament                                   # every pair twice
 docker compose run --rm tournament --teams test_student,test_student_2
-docker compose run --rm --entrypoint match tournament test_student test_student_2
-docker compose run --rm --entrypoint replay tournament logs/<file>.jsonl
+docker compose run --rm tournament match test_student test_student_2
+docker compose run --rm tournament replay logs/<file>.jsonl
 ```
 
 The first run builds the image. Flags work the same as below.
+
+The image has Python 3 (with numpy, scipy, pandas, scikit-learn, requests and nltk), Node.js, and gcc/g++/make.
+For any other Python package, put a `requirements.txt` in the team's folder: it's installed automatically
+before the match (once, then cached until the file changes). All teams' requirements are installed together,
+so two teams pinning conflicting versions of a package will fail with a pip error. Model files and data can
+just live in the team folder. For other languages, use `team.json`; a language that isn't in the image
+(Java, Rust, ...) needs a line added to `Dockerfile.tournament`.
 
 **Bots that use Ollama.** Add `--profile ollama` to also start an Ollama server in the compose file. It reuses
 models you've already pulled on your machine (from `~/.ollama`, or `OLLAMA_MODELS_DIR`), and

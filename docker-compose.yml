@@ -2,8 +2,8 @@
 #
 #   docker compose run --rm tournament                  # every pair twice
 #   docker compose run --rm tournament --teams a,b      # only some teams
-#   docker compose run --rm --entrypoint match tournament test_student test_student_2
-#   docker compose run --rm --entrypoint replay tournament logs/<file>.jsonl
+#   docker compose run --rm tournament match test_student test_student_2
+#   docker compose run --rm tournament replay logs/<file>.jsonl
 #
 # Bots that use Ollama: start the bundled server on top of the same file with
 #   docker compose --profile ollama run --rm tournament
@@ -18,6 +18,8 @@ services:
     volumes:
       - ./students:/app/students
       - ./logs:/app/logs
+      # Packages from students/*/requirements.txt, kept between runs.
+      - pydeps:/deps
     environment:
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-}
@@ -38,3 +40,6 @@ services:
     #         - driver: nvidia
     #           count: all
     #           capabilities: [gpu]
+
+volumes:
+  pydeps:
