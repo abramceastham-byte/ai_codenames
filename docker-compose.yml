@@ -1,0 +1,40 @@
+# Everything for the tournament in Docker.
+#
+#   docker compose run --rm tournament                  # every pair twice
+#   docker compose run --rm tournament --teams a,b      # only some teams
+#   docker compose run --rm --entrypoint match tournament test_student test_student_2
+#   docker compose run --rm --entrypoint replay tournament logs/<file>.jsonl
+#
+# Bots that use Ollama: start the bundled server on top of the same file with
+#   docker compose --profile ollama run --rm tournament
+# It reads models already pulled on this machine from OLLAMA_MODELS_DIR, and
+# bots find the model name in $OLLAMA_MODEL and the server in $OLLAMA_HOST.
+# See `scripts/ollama_models.sh` for a list of what is pulled.
+services:
+  tournament:
+    build:
+      context: .
+      dockerfile: Dockerfile.tournament
+    volumes:
+      - ./students:/app/students
+      - ./logs:/app/logs
+    environment:
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    volumes:
+      # Reuse models already pulled on the host (default ~/.ollama).
+      - ${OLLAMA_MODELS_DIR:-~/.ollama}:/root/.ollama
+    # For an NVIDIA GPU, uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]

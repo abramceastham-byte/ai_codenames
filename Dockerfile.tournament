@@ -1,0 +1,19 @@
+# Runs the bot tournament (cmd/tournament, cmd/match, cmd/replay) with Go and
+# Python 3 inside the container, so nothing but Docker is needed on the host.
+FROM golang:1.24-bookworm
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go build -o /usr/local/bin/tournament ./cmd/tournament \
+    && go build -o /usr/local/bin/match ./cmd/match \
+    && go build -o /usr/local/bin/replay ./cmd/replay
+
+# students/ and logs/ are mounted by docker-compose.yml, so edits and results
+# stay on the host.
+ENTRYPOINT ["tournament"]

@@ -42,6 +42,32 @@ run only some teams.
 Before playing anything, the tournament checks every team and **stops with a clear error** if a folder or
 bot program is missing (e.g. `team "alice" spymaster: file "spymaster.py" not found`). Fix it and rerun.
 
+### Or run everything in Docker
+
+If you'd rather not install Go or Python, Docker (with Compose) does all of it. The `students/` and
+`logs/` folders are mounted from your machine, so your bots and results stay where they are.
+
+```bash
+docker compose run --rm tournament                                   # every pair twice
+docker compose run --rm tournament --teams test_student,test_student_2
+docker compose run --rm --entrypoint match tournament test_student test_student_2
+docker compose run --rm --entrypoint replay tournament logs/<file>.jsonl
+```
+
+The first run builds the image. Flags work the same as below.
+
+**Bots that use Ollama.** Add `--profile ollama` to also start an Ollama server in the compose file. It reuses
+models you've already pulled on your machine (from `~/.ollama`, or `OLLAMA_MODELS_DIR`), and
+`OLLAMA_MODEL` picks which one. Bots can read the server address from `$OLLAMA_HOST` and the model from `$OLLAMA_MODEL`.
+
+```bash
+./scripts/ollama_models.sh                                           # list pulled models
+OLLAMA_MODEL=qwen3:30b-a3b docker compose --profile ollama run --rm tournament
+```
+
+To use an Ollama already running on your machine instead, skip the profile and set
+`OLLAMA_HOST=http://host.docker.internal:11434`.
+
 ## 3. Run one match
 
 ```bash
