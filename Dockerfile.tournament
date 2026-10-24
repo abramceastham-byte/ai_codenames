@@ -17,6 +17,11 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1 PIP_NO_CACHE_DIR=1
 # team's requirements.txt.
 RUN pip install numpy scipy pandas scikit-learn requests nltk
 
+# nltk is only the code; bots usually want these datasets too. Stored outside
+# /root so they're found whatever user the container runs as.
+ENV NLTK_DATA=/usr/share/nltk_data
+RUN python3 -m nltk.downloader -d /usr/share/nltk_data wordnet omw-1.4 stopwords punkt punkt_tab averaged_perceptron_tagger
+
 # Team packages land here (a volume in docker-compose.yml), ahead of the above.
 ENV PYTHONPATH=/deps
 RUN mkdir /deps
