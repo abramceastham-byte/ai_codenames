@@ -33,7 +33,8 @@ COPY . .
 RUN go build -o /usr/local/bin/tournament ./cmd/tournament \
     && go build -o /usr/local/bin/match ./cmd/match \
     && go build -o /usr/local/bin/replay ./cmd/replay \
-    && install -m 755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+    && sed 's/\r$//' docker/entrypoint.sh > /usr/local/bin/entrypoint.sh \
+    && chmod 755 /usr/local/bin/entrypoint.sh
 
 # students/ and logs/ are mounted by docker-compose.yml, so edits and results
 # stay on the host.

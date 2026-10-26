@@ -63,17 +63,32 @@ so two teams pinning conflicting versions of a package will fail with a pip erro
 just live in the team folder. For other languages, use `team.json`; a language that isn't in the image
 (Java, Rust, ...) needs a line added to `Dockerfile.tournament`.
 
-**Bots that use Ollama.** Add `--profile ollama` to also start an Ollama server in the compose file. It reuses
-models you've already pulled on your machine (from `~/.ollama`, or `OLLAMA_MODELS_DIR`), and
-`OLLAMA_MODEL` picks which one. Bots can read the server address from `$OLLAMA_HOST` and the model from `$OLLAMA_MODEL`.
+Inside the container, commands run as the owner of your `students/` folder, so files in `logs/` belong to you.
+
+**Bots that use Ollama.** Add `--profile ollama` to also start the Ollama server from the compose file, and
+set `OLLAMA_MODEL` to the model to use. Before the first match, the model is pulled (the first time only;
+models are kept in a Docker volume) and loaded, so the first move doesn't time out. Bots read the server
+address from `$OLLAMA_HOST` and the model from `$OLLAMA_MODEL`.
 
 ```bash
-./scripts/ollama_models.sh                                           # list pulled models
-OLLAMA_MODEL=qwen3:30b-a3b docker compose --profile ollama run --rm tournament
+OLLAMA_MODEL=gemma3:1b docker compose --profile ollama run --rm tournament
+./scripts/ollama.sh list                     # the ollama CLI, inside the container (also: pull, run, ...)
+./scripts/try_llm_bot.sh                     # play the example LLM bot against test_student
+docker compose --profile ollama down         # stop the Ollama server when you're done
 ```
 
-To use an Ollama already running on your machine instead, skip the profile and set
-`OLLAMA_HOST=http://host.docker.internal:11434`.
+[`examples/ollama/`](examples/ollama) is a complete LLM team using only the Python standard library. It checks
+everything the model says and falls back to a safe move when the model is slow or breaks a rule.
+The bundled server runs on the CPU. A 1B–4B model answers in about a second, but larger ones may need
+`--move_timeout`. For an NVIDIA GPU, uncomment the `deploy` block in `docker-compose.yml`
+(needs the NVIDIA Container Toolkit). To use models from a host folder instead of the volume, set
+`OLLAMA_MODELS_DIR` (e.g. `~/.ollama`). To use an Ollama server that's already running instead of the bundled one,
+skip the profile and set `OLLAMA_HOST=http://host.docker.internal:11434`. With Docker Desktop (Windows, Mac)
+that reaches an Ollama app running on your computer. With Docker installed directly in Linux or WSL, that server
+must listen on more than 127.0.0.1 (start it with `OLLAMA_HOST=0.0.0.0`).
+
+On Windows without WSL, the `docker compose` commands work in PowerShell, but set variables first
+(`$env:OLLAMA_MODEL="gemma3:1b"`) instead of putting them before the command, and the `scripts/*.sh` helpers need Git Bash.
 
 ## 3. Run one match
 

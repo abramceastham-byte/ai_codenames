@@ -5,11 +5,12 @@
 #   docker compose run --rm tournament match test_student test_student_2
 #   docker compose run --rm tournament replay logs/<file>.jsonl
 #
-# Bots that use Ollama: start the bundled server on top of the same file with
-#   docker compose --profile ollama run --rm tournament
-# It reads models already pulled on this machine from OLLAMA_MODELS_DIR, and
-# bots find the model name in $OLLAMA_MODEL and the server in $OLLAMA_HOST.
-# See `scripts/ollama_models.sh` for a list of what is pulled.
+# Bots that use Ollama: add the profile to also start the bundled server,
+#   OLLAMA_MODEL=gemma3:1b docker compose --profile ollama run --rm tournament
+# Bots find the model name in $OLLAMA_MODEL and the server in $OLLAMA_HOST.
+# The model is pulled on first use and kept in the `ollama` volume (or set
+# OLLAMA_MODELS_DIR to reuse a host folder, e.g. ~/.ollama). The server keeps
+# running afterwards; stop it with `docker compose --profile ollama down`.
 services:
   tournament:
     build:
@@ -23,16 +24,27 @@ services:
     environment:
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # `run` only starts services listed here. Without --profile ollama this one
+    # is skipped (required: false); with it, the tournament waits until it's up.
+    depends_on:
+      ollama:
+        condition: service_healthy
+        required: false
 
   ollama:
     profiles: ["ollama"]
     image: ollama/ollama:latest
     volumes:
-      # Reuse models already pulled on the host (default ~/.ollama).
-      - ${OLLAMA_MODELS_DIR:-~/.ollama}:/root/.ollama
-    # For an NVIDIA GPU, uncomment:
+      - ${OLLAMA_MODELS_DIR:-ollama}:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    # For an NVIDIA GPU (needs the NVIDIA Container Toolkit), uncomment:
     # deploy:
     #   resources:
     #     reservations:
@@ -43,3 +55,4 @@ services:
 
 volumes:
   pydeps:
+  ollama:
