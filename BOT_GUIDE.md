@@ -9,6 +9,8 @@ The only requirement is that they follow the protocol below.
 
 - [`examples/python/spymaster.py`](examples/python/spymaster.py) and
   [`operative.py`](examples/python/operative.py): minimal bots that follow the protocol and play legal (random) moves
+- [`examples/ollama/`](examples/ollama): bots that ask a local model on [Ollama](https://ollama.com) for
+  clues and guesses, check its answers, and fall back to a safe move if it's slow or breaks a rule
 - [`examples/wordlist.txt`](examples/wordlist.txt): **the official word list**. Every board word comes from these 400 words.
 - [`examples/sample_spymaster_request.json`](examples/sample_spymaster_request.json) and
   [`sample_operative_request.json`](examples/sample_operative_request.json): complete 25-card requests
